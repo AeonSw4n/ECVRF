@@ -11,5 +11,5 @@ static uint32_t fe_legendre_ifromby(by b);
 static void elligator2_ed25519(const uint8_t *data, size_t size,
                        const uint8_t public_key[32],
                        uint8_t out_point[32]);
-
+static void elligator2_cofactor_mult(by out, by in);
 #endif /* ECVRFELLIGATOR2_H_ */

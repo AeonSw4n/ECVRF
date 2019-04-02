@@ -232,3 +232,8 @@ static void elligator2_ed25519(const uint8_t *data, size_t size,
     cofactor[0] = 8;
     x25519_scalar_mult(h, cofactor, out_point);
 }
+
+static void elligator2_cofactor_mult(by out, by in)
+{
+
+}
