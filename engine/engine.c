@@ -6,7 +6,8 @@ static const char *engine_id = "ecvrf";
 static const char *engine_name = "OpenSSL engine implementing ECVRF!";
 
 int ecvrf_init(ENGINE *e){
-  test_fe_legendre();
+  //test_fe_legendre();
+  test_elligator_2();
   return 1;
 
  end:
