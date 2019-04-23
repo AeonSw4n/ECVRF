@@ -161,7 +161,13 @@ static void test_elligator_2()
   // y-Edwards
   fe y;
 
-  // 1. u = -A / (1 + 2 * (r ** 2))
+  // (x,y) Edwards complete
+  ge_p1p1 piop1;
+
+  // (x,y) Edwards projective
+  ge_p2 piop2;
+
+  // 1. u   = -A / (1 + 2 * (r ** 2))
   fe_sq2(t0, r);                // t0        = 2 * (r ** 2)
   fe_add(t0, o0, t0);           // t0        = 1 + 2 * (r ** 2)
   fe_invert(t0, t0);            // t0        = 1 / (1 + 2 * (r ** 2))
@@ -185,10 +191,8 @@ static void test_elligator_2()
 
   // 4. v   = u             e == 1
   //    w2  = w             e == 1
-  //    sqr = sqr           e == 1
   //    v   = -A - u        e == -1
   //    w2  = ur^2w         e == -1
-  //    sqr = sqr*r2^(1/2)  e == -1
   fe_sub(u1, u1, A);            // u1        = -A
   fe_sub(u1, u1, u0);           // u1        = -A - u
 
@@ -201,36 +205,40 @@ static void test_elligator_2()
   fe_mul(w2, w2, w);            // w2        = 2 * r ** 2 * (u ** 3 + A * u ** 2 + u)
   fe_cmov(w2, w, b);            // w2
 
-
+  // 5. sqr = sqr           e == 1
+  //    sqr = sqr*r2^(1/2)  e == -1
   fe_mul(u252m2, u252m2, r);
   fe_cmov(u252m2, o1, b);
   fe_mul(sqr, sqr, u252m2);     // sqr
 
-  // 5. 
+  // 6. sqr = sqr             sqr ** 2 == w2
+  //    sqr = sqr * 1^(1/2)   sqr ** 2 != w2
   fe_sq(sqr2, sqr);
-  b = !(fe_parity(sqr2) ^ fe_parity(w2)); // 0 if they differ (good). 1 if they are the same (bad)
+  b = !(fe_parity(sqr2) ^ fe_parity(w2));    // Inverted for some reason. 0 if they differ (good). 1 if they are the same (bad)
   fe_cmov(o1, sqrtm1, b);
-  fe_mul(sqr, sqr, o1);
+  fe_mul(sqr, sqr, o1);         // sqr
 
 
   e2[0] = -e2[0];
-  fe_mul(sqr, sqr, e2);
+  fe_mul(sqr, sqr, e2);         // -e * v
 
-  fe_neg(sqA, sqA);
-  fe_mul(sqA, sqA, uf);
 
-  ge_p1p1 piop1;
-  ge_p2 piop2;
+  // 7. Y   = uf - 1
+  //    T   = uf + 1
+  fe_sub(t0, uf, o0);           // t0        = uf - 1
+  fe_add(t1, uf, o0);           // t1        = uf + 1
+  fe_copy(piop1.Y, t0);         // Y         = t0
+  fe_copy(piop1.T, t1);         // T         = t1
 
-  fe_sub(t0, uf, o0); // t0 = uf - 1
-  fe_add(t1, uf, o0); // t1 = uf + 1
+  // 8. X   = uf * A^(1/2)
+  //    Z   = sqr
+  fe_mul(sqA, sqA, uf);         // sqA       = uf * A^(1/2)
+  fe_copy(piop1.X, sqA);        // X         = sqA
+  fe_copy(piop1.Z, sqr);        // Z         = sqr
 
-  fe_copy(piop1.Y, t0);
-  fe_copy(piop1.T, t1);
-  fe_copy(piop1.X, sqA);
-  fe_copy(piop1.Z, sqr);
-
+  // 9. pio2 = piop1
   ge_p1p1_to_p2(&piop2, &piop1);
+
   //fe m2z, m2x, m2y;
   //if(negX)
   //  fe_neg(&piop2.X, &piop2.X);
@@ -241,6 +249,8 @@ static void test_elligator_2()
   //print_fe(m2x);
   //print_fe(m2y);
   //printf("\n");
+
+  // 10. pio2 = 8 * pio2
   ge_p2_dbl(&piop1, &piop2);
   ge_p1p1_to_p2(&piop2, &piop1);
   ge_p2_dbl(&piop1, &piop2);
@@ -248,13 +258,14 @@ static void test_elligator_2()
   ge_p2_dbl(&piop1, &piop2);
   ge_p1p1_to_p2(&piop2, &piop1);
 
+  // 11. piopoint = pio2
   by piopoint;
   ge_tobytes(piopoint, &piop2);
   by_print(piopoint);
 
 
-
-
+  // -----------------------
+  // SECOND, SLOWER METHOD
   fe_invert(t1, t1);   // t1 = 1 / (uf + 1)
   fe_mul(y, t0, t1);   // y = (uf - 1) / (uf + 1)
   ge_p3 he;
