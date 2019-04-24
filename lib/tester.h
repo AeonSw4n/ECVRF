@@ -7,7 +7,6 @@
 static void by_print(by s);
 static void print_fe(fe in);
 static void test_fe_legendre();
-static void fe_swap(fe f, fe g, unsigned int b);
 static void test_elligator_2();
 
 #endif /* ECVRFTESTER_H_ */

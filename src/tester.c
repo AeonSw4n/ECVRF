@@ -69,231 +69,145 @@ static void test_fe_legendre()
   by_print(mulby);
 }
 
-static void fe_swap(fe f, fe g, unsigned int b)
-{
-    size_t i;
-
-    b = 0-b;
-    for (i = 0; i < 10; i++) {
-        int32_t x = f[i] ^ g[i];
-        x &= b;
-        f[i] ^= x;
-        g[i] ^= x;
-    }
-}
-
-//TODO CHECK IF WORKING!!!
-static unsigned int fe_parity(const fe h){
-  int32_t h0 = h[0];
-  int32_t h1 = h[1];
-  int32_t h2 = h[2];
-  int32_t h3 = h[3];
-  int32_t h4 = h[4];
-  int32_t h5 = h[5];
-  int32_t h6 = h[6];
-  int32_t h7 = h[7];
-  int32_t h8 = h[8];
-  int32_t h9 = h[9];
-  int32_t q;
-
-  q = (19 * h9 + (((int32_t) 1) << 24)) >> 25;
-  q = (h0 + q) >> 26;
-  q = (h1 + q) >> 25;
-  q = (h2 + q) >> 26;
-  q = (h3 + q) >> 25;
-  q = (h4 + q) >> 26;
-  q = (h5 + q) >> 25;
-  q = (h6 + q) >> 26;
-  q = (h7 + q) >> 25;
-  q = (h8 + q) >> 26;
-  q = (h9 + q) >> 25;
-
-  /* Goal: Output h-(2^255-19)q, which is between 0 and 2^255-20. */
-  h0 += 19 * q;
-  h0 &= kBottom26Bits;
-  return (unsigned int) ((uint8_t)(h0) & 1);
-}
-
 static void test_elligator_2()
 {
   fe r;
-  uint8_t *input = "ff27b906c1dd409b64b455ee87529f967514bcbbbdbdd45f9c22eabc5de06455";
-  int negX = 0;
-  int sqrM = 0;
-  by in;
-  by_fromstr(in, input);
-  fe_frombytes(r, in);
+    uint8_t *input = "dcd7cda88d6798599e07216de5a48a27dcd1cde197ab39ccaf6a906ae6b25c7f";
+    int negX = 0;
+    int sqrM = 0;
+    by in;
+    by_fromstr(in, input);
+    fe_frombytes(r, in);
 
-  // Montgomery constant A
-  fe A;
-  elligator_fe_A(A);
+    // Montgomery constant A
+    fe A;
+    elligator_fe_A(A);
 
-  // Legendre symbols
-  fe e1, e2;
+    // Legendre symbols
+    fe e1, e2;
 
-  // t0/t1 is y-Edwards
-  fe t0, t1;
+    // Conditional value
+    unsigned int b;
 
-  // 1 constants for arithmetic / cmoves
-  fe o0, o1;
-  fe_1(o0);
-  fe_1(o1);
+    // t0/t1 is y-Edwards
+    fe t0, t1;
 
-  // Square root of u=2
-  fe u252m2;
-  fe_u252m2(u252m2);
+    // 1 constants for arithmetic / cmoves
+    fe o0, o1;
+    fe_1(o0);
+    fe_1(o1);
 
-  // Square root of A
-  fe sqA;
-  fe_sqAp2(sqA);
+    // Square root of u=2
+    fe u252m2;
+    fe_u252m2(u252m2);
 
-  // u is x-Montgomery
-  fe u0, u1, uf;
-  fe_0(u0);
-  fe_0(u1);
+    // Square root of A
+    fe sqA;
+    fe_sqAp2(sqA);
 
-  // w=v^2, where v is y-Montgomery
-  fe w, w2;
+    // u is x-Montgomery
+    fe u0, u1, uf;
+    fe_0(u0);
+    fe_0(u1);
 
-  // y-Montgomery
-  fe sqr, sqr2;
+    // w=v^2, where v is y-Montgomery
+    fe w, w2;
 
-  // y-Edwards
-  fe y;
+    // y-Montgomery
+    fe sqr, sqr2;
 
-  // (x,y) Edwards complete
-  ge_p1p1 piop1;
+    // y-Edwards
+    fe y;
 
-  // (x,y) Edwards projective
-  ge_p2 piop2;
+    // (x,y) Edwards complete
+    ge_p1p1 p1p1;
 
-  // 1. u   = -A / (1 + 2 * (r ** 2))
-  fe_sq2(t0, r);                // t0        = 2 * (r ** 2)
-  fe_add(t0, o0, t0);           // t0        = 1 + 2 * (r ** 2)
-  fe_invert(t0, t0);            // t0        = 1 / (1 + 2 * (r ** 2))
-  fe_sub(u0, u0, A);            // u0        = -A
-  fe_mul(u0, u0, t0);           // u0        = -A / (1 + 2 * (r ** 2))
+    // (x,y) Edwards projective
+    ge_p2 p2;
 
+    // 8*p out point
+    by out;
 
-  // 2. v^2 = u * (u**2 + A*u + 1)
-  fe_sq(t0, u0);                // t0        = u ** 2
-  fe_mul(t1, A, u0);            // t1        = A * u
-  fe_add(t0, t0, t1);           // t0        = u**2 + A*u
-  fe_add(t0, t0, o0);           // t0        = u**2 + A*u + 1
-  fe_mul(w, u0, t0);            // w         = u * (u**2 + A*u + 1)
+    // 1. u   = -A / (1 + 2 * (r ** 2))
+    fe_sq2(t0, r);                // t0        = 2 * (r ** 2)
+    fe_add(t0, o0, t0);           // t0        = 1 + 2 * (r ** 2)
+    fe_invert(t0, t0);            // t0        = 1 / (1 + 2 * (r ** 2))
+    fe_sub(u0, u0, A);            // u0        = -A
+    fe_mul(u0, u0, t0);           // u0        = -A / (1 + 2 * (r ** 2))
 
-  fe_tobytes(in, w);
-  by_print(in);
+    // 2. v^2 = u * (u**2 + A*u + 1)
+    fe_sq(t0, u0);                // t0        = u ** 2
+    fe_mul(t1, A, u0);            // t1        = A * u
+    fe_add(t0, t0, t1);           // t0        = u**2 + A*u
+    fe_add(t0, t0, o0);           // t0        = u**2 + A*u + 1
+    fe_mul(w, u0, t0);            // w         = u * (u**2 + A*u + 1)
 
-  // 3. (sqr, e) = (v, legendre(w))
-  fe_sqr_legendre(sqr, e1, w);  // (sqr, e1) = (v, lengendre(w))
-  fe_copy(e2, e1);              // e2        = e1
+    // 3. (sqr, e) = (v, legendre(w))
+    fe_sqr_legendre(sqr, e1, w);  // (sqr, e1) = (v, lengendre(w))
+    fe_copy(e2, e1);              // e2        = e1
 
-  // 4. v   = u             e == 1
-  //    w2  = w             e == 1
-  //    v   = -A - u        e == -1
-  //    w2  = ur^2w         e == -1
-  fe_sub(u1, u1, A);            // u1        = -A
-  fe_sub(u1, u1, u0);           // u1        = -A - u
+    // 4. v   = u             e == 1
+    //    w2  = w             e == 1
+    //    v   = -A - u        e == -1
+    //    w2  = ur^2w         e == -1
+    fe_sub(u1, u1, A);            // u1        = -A
+    fe_sub(u1, u1, u0);           // u1        = -A - u
 
-  e1[0] = (e1[0] + 1) & 2;
-  unsigned int b = e1[0] >> 1;  // e         = {0,1} for cmove
-  fe_cmov(u1, u0, b);
-  fe_copy(uf, u1);              // v         = uf
+    e1[0] = (e1[0] + 1) & 2;
+    b = e1[0] >> 1;  // e         = {0,1} for cmove
+    fe_cmov(u1, u0, b);
+    fe_copy(uf, u1);              // v         = uf
 
-  fe_sq2(w2, r);                // w2        = 2 * r ** 2
-  fe_mul(w2, w2, w);            // w2        = 2 * r ** 2 * (u ** 3 + A * u ** 2 + u)
-  fe_cmov(w2, w, b);            // w2
+    fe_sq2(w2, r);                // w2        = 2 * r ** 2
+    fe_mul(w2, w2, w);            // w2        = 2 * r ** 2 * (u ** 3 + A * u ** 2 + u)
+    fe_cmov(w2, w, b);            // w2
 
-  // 5. sqr = sqr           e == 1
-  //    sqr = sqr*r2^(1/2)  e == -1
-  fe_mul(u252m2, u252m2, r);
-  fe_cmov(u252m2, o1, b);
-  fe_mul(sqr, sqr, u252m2);     // sqr
+    // 5. sqr = sqr           e == 1
+    //    sqr = sqr*r2^(1/2)  e == -1
+    fe_mul(u252m2, u252m2, r);
+    fe_cmov(u252m2, o1, b);
+    fe_mul(sqr, sqr, u252m2);     // sqr
 
-  // 6. sqr = sqr             sqr ** 2 == w2
-  //    sqr = sqr * 1^(1/2)   sqr ** 2 != w2
-  fe_sq(sqr2, sqr);
-  b = !(fe_parity(sqr2) ^ fe_parity(w2));    // Inverted for some reason. 0 if they differ (good). 1 if they are the same (bad)
-  fe_cmov(o1, sqrtm1, b);
-  fe_mul(sqr, sqr, o1);         // sqr
+    // 6. sqr = sqr             sqr ** 2 == w2
+    //    sqr = sqr * 1^(1/2)   sqr ** 2 != w2
+    fe_sq(sqr2, sqr);
+    b = !(fe_parity(sqr2) ^ fe_parity(w2));    // Inverted for some reason. 0 if they differ (good). 1 if they are the same (bad)
+    fe_cmov(o1, sqrtm1, b);
+    fe_mul(sqr, sqr, o1);         // sqr
 
+    // 7. Y   = uf - 1
+    //    T   = uf + 1
+    fe_sub(t0, uf, o0);           // t0        = uf - 1
+    fe_add(t1, uf, o0);           // t1        = uf + 1
+    fe_copy(p1p1.Y, t0);          // Y         = t0
+    fe_copy(p1p1.T, t1);          // T         = t1
 
-  e2[0] = -e2[0];
-  fe_mul(sqr, sqr, e2);         // -e * v
+    // 8. X   = uf * A^(1/2)
+    //    Z   = sqr
+    fe_mul(sqA, sqA, uf);         // sqA       = uf * A^(1/2)
 
+    // absolute value of (X/Z)
+    fe_invert(t0, sqr);
+    fe_mul(t0, t0, sqA);
+    fe_neg(t1, sqr);
+    b = fe_parity(t0);
+    fe_cmov(sqr, t1, b);
 
-  // 7. Y   = uf - 1
-  //    T   = uf + 1
-  fe_sub(t0, uf, o0);           // t0        = uf - 1
-  fe_add(t1, uf, o0);           // t1        = uf + 1
-  fe_copy(piop1.Y, t0);         // Y         = t0
-  fe_copy(piop1.T, t1);         // T         = t1
+    fe_copy(p1p1.X, sqA);         // X         = sqA
+    fe_copy(p1p1.Z, sqr);         // Z         = sqr
 
-  // 8. X   = uf * A^(1/2)
-  //    Z   = sqr
-  fe_mul(sqA, sqA, uf);         // sqA       = uf * A^(1/2)
-  fe_copy(piop1.X, sqA);        // X         = sqA
-  fe_copy(piop1.Z, sqr);        // Z         = sqr
+    // 9. pio2 = p1p1
+    ge_p1p1_to_p2(&p2, &p1p1);
 
-  // 9. pio2 = piop1
-  ge_p1p1_to_p2(&piop2, &piop1);
+    // 10. pio2 = 8 * pio2
+    ge_p2_dbl(&p1p1, &p2);
+    ge_p1p1_to_p2(&p2, &p1p1);
+    ge_p2_dbl(&p1p1, &p2);
+    ge_p1p1_to_p2(&p2, &p1p1);
+    ge_p2_dbl(&p1p1, &p2);
+    ge_p1p1_to_p2(&p2, &p1p1);
 
-  //fe m2z, m2x, m2y;
-  //if(negX)
-  //  fe_neg(&piop2.X, &piop2.X);
-  //fe_invert(m2z, piop2.Z);
-  //fe_mul(m2x, piop2.X, m2z);
-  //fe_mul(m2y, piop2.Y, m2z);
-
-  //print_fe(m2x);
-  //print_fe(m2y);
-  //printf("\n");
-
-  // 10. pio2 = 8 * pio2
-  ge_p2_dbl(&piop1, &piop2);
-  ge_p1p1_to_p2(&piop2, &piop1);
-  ge_p2_dbl(&piop1, &piop2);
-  ge_p1p1_to_p2(&piop2, &piop1);
-  ge_p2_dbl(&piop1, &piop2);
-  ge_p1p1_to_p2(&piop2, &piop1);
-
-  // 11. piopoint = pio2
-  by piopoint;
-  ge_tobytes(piopoint, &piop2);
-  by_print(piopoint);
-
-
-  // -----------------------
-  // SECOND, SLOWER METHOD
-  fe_invert(t1, t1);   // t1 = 1 / (uf + 1)
-  fe_mul(y, t0, t1);   // y = (uf - 1) / (uf + 1)
-  ge_p3 he;
-  ge_p1p1 hc;
-  ge_p2 hp;
-
-  by point;
-  fe_tobytes(point, y);
-  ge_frombytes_vartime(&he, point);
-  ge_p3_to_p2(&hp, &he);
-
-  //fe m1z, m1x, m1y;
-  //fe_invert(m1z, hp.Z);
-  //fe_mul(m1x, hp.X, m1z);
-  //fe_mul(m1y, hp.Y, m1z);
-  //printf("\n");
-  //print_fe(m1x);
-  //print_fe(m1y);
-  //printf("\n");
-  ge_p2_dbl(&hc, &hp);
-  ge_p1p1_to_p2(&hp, &hc);
-  ge_p2_dbl(&hc, &hp);
-  ge_p1p1_to_p2(&hp, &hc);
-  ge_p2_dbl(&hc, &hp);
-  ge_p1p1_to_p2(&hp, &hc);
-
-  ge_tobytes(point, &hp);
-  by_print(point);
-
-
+    // 11. piopoint = pio2
+    ge_tobytes(out, &p2);
+    by_print(out);
 }

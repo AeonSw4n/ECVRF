@@ -7,7 +7,14 @@ static const char *engine_name = "OpenSSL engine implementing ECVRF!";
 
 int ecvrf_init(ENGINE *e){
   //test_fe_legendre();
-  test_elligator_2();
+  //test_elligator_2();
+  uint8_t data[2] = {175, 130};
+  uint8_t *PK  = "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025";
+  by in;
+  by_fromstr(in, PK);
+  //by_print(in);
+  by out;
+  elligator2_ed25519(data, 2, in, out);
   return 1;
 
  end:

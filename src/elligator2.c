@@ -265,131 +265,199 @@ static uint32_t fe_legendre_ifromby(by b)
   return lfen[0];
 }
 
+static unsigned int fe_parity(const fe h){
+  int32_t h0 = h[0];
+  int32_t h1 = h[1];
+  int32_t h2 = h[2];
+  int32_t h3 = h[3];
+  int32_t h4 = h[4];
+  int32_t h5 = h[5];
+  int32_t h6 = h[6];
+  int32_t h7 = h[7];
+  int32_t h8 = h[8];
+  int32_t h9 = h[9];
+  int32_t q;
+
+  q = (19 * h9 + (((int32_t) 1) << 24)) >> 25;
+  q = (h0 + q) >> 26;
+  q = (h1 + q) >> 25;
+  q = (h2 + q) >> 26;
+  q = (h3 + q) >> 25;
+  q = (h4 + q) >> 26;
+  q = (h5 + q) >> 25;
+  q = (h6 + q) >> 26;
+  q = (h7 + q) >> 25;
+  q = (h8 + q) >> 26;
+  q = (h9 + q) >> 25;
+
+  /* Goal: Output h-(2^255-19)q, which is between 0 and 2^255-20. */
+  h0 += 19 * q;
+  h0 &= kBottom26Bits;
+  return (unsigned int) ((uint8_t)(h0) & 1);
+}
+
 static void elligator2_ed25519(const uint8_t *data, size_t size,
-                       const uint8_t public_key[32],
-                       uint8_t out_point[32])
+                       by public_key,
+                      by out_point)
 {
-    static const uint8_t SUITE[1] = {0x01};
-    static const uint8_t ONE[1] = {0x01};
+    static const uint8_t SUITE  = 0x04;
+    static const uint8_t ONE    = 0x01;
 
     // 3. hash(suite || one || pk || alpha)
-
     uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
     SHA512_CTX hash_ctx;
     SHA512_Init(&hash_ctx);
-    SHA512_Update(&hash_ctx, SUITE, sizeof(SUITE));
-    SHA512_Update(&hash_ctx, ONE, sizeof(ONE));
+    SHA512_Update(&hash_ctx, &SUITE, 1);
+    SHA512_Update(&hash_ctx, &ONE, 1);
     SHA512_Update(&hash_ctx, public_key, 32);
     SHA512_Update(&hash_ctx, data, size);
     SHA512_Final(hash, &hash_ctx);
 
     // 4. take first 32 bytes of the hash
-
-    uint8_t truncatedHash[32] = {0};
+    by truncatedHash;
     memcpy(truncatedHash, hash, 32);
 
     // 7. take highest order bit of truncated hash
     // 8. clear the bit in the source
 
-    uint8_t x0 = truncatedHash[31] & 0x80;
+    //uint8_t x0 = truncatedHash[31] & 0x80;
     truncatedHash[31] &= 0x7f;
+    by_print(truncatedHash);
 
-    // 9. convert to integer
-
-    fe r = {0};
+    fe r;
     fe_frombytes(r, truncatedHash);
 
-    // 10. u = - A / (1 + 2*(r^2) ) mod p
-
-    fe t0 = {0};
-    fe t1 = {0};
-
-    fe one = {0};
-    fe_1(one);
-
-    fe A = {0};
+    // Montgomery constant A
+    fe A;
     elligator_fe_A(A);
 
+    // Legendre symbols
+    fe e1, e2;
 
-    fe_sq(t0, r);       // r ** 2
-    fe_add(t0, t0, t0);   // 2 * (r ** 2)
-    fe_add(t0, one, t0);  // 1 + 2 * (r ** 2)
-    fe_invert(t0, t0);    // 1 / (1 + 2 * (r ** 2))
+    // Conditional value
+    unsigned int b;
 
-    fe u = {0};
-    fe_0(u);
-    fe_sub(u, u, A);      // -A
-    fe_mul(u, u, t0);     // -A / (1 + 2 * (r ** 2))
+    // t0/t1 is y-Edwards
+    fe t0, t1;
 
-    // 11. w = u * (u^2 + A*u + 1) mod p
+    // 1 constants for arithmetic / cmoves
+    fe o0, o1;
+    fe_1(o0);
+    fe_1(o1);
 
-    fe_sq(t0, u);       // u ** 2
-    fe_mul(t1, A, u);    // A * u
-    fe_add(t0, t0, t1);  // u**2 + A*u
-    fe_add(t0, t0, one); // u**2 + A*u + 1
+    // Square root of u=2
+    fe u252m2;
+    fe_u252m2(u252m2);
 
-    fe w = {0};
-    fe_mul(w, u, t0);    // u * (u**2 + A*u + 1)
+    // Square root of A
+    fe sqA;
+    fe_sqAp2(sqA);
 
-    // 12. e = Legendre symbol of w and p
+    // u is x-Montgomery
+    fe u0, u1, uf;
+    fe_0(u0);
+    fe_0(u1);
 
-    fe e = {0};
-    fe_legendre(e, w);   // w ** ((p-1)/2)
+    // w=v^2, where v is y-Montgomery
+    fe w, w2;
 
-    fe u2 = {0};
-    fe_0(u2);
-    fe_sub(u2, u2, A);   // -A
-    fe_sub(u2, u2, u);   // -A - u
+    // y-Montgomery
+    fe sqr, sqr2;
 
-    e[0] = (e[0] + 1) & 2;
-    unsigned int b = e[0] >> 1;
-    fe_swap(u, u2, b);  // swaps if b == 1
+    // y-Edwards
+    fe y;
 
-    fe uf = {0};
-    fe_copy(uf, u2);
+    // (x,y) Edwards complete
+    ge_p1p1 p1p1;
 
-    // 14. y coordinate
+    // (x,y) Edwards projective
+    ge_p2 p2;
 
-    fe_sub(t0, uf, one); // t0 = uf - 1
+    // 8*p out point
+    by out;
 
-    fe_add(t1, uf, one); // t1 = uf + 1
-    fe_invert(t1, t1);   // t1 = 1 / (uf + 1)
+    // 1. u   = -A / (1 + 2 * (r ** 2))
+    fe_sq2(t0, r);                // t0        = 2 * (r ** 2)
+    fe_add(t0, o0, t0);           // t0        = 1 + 2 * (r ** 2)
+    fe_invert(t0, t0);            // t0        = 1 / (1 + 2 * (r ** 2))
+    fe_sub(u0, u0, A);            // u0        = -A
+    fe_mul(u0, u0, t0);           // u0        = -A / (1 + 2 * (r ** 2))
 
-    fe y = {0};
-    fe_mul(y, t0, t1);   // y = (uf - 1) / (uf + 1)
+    // 2. v^2 = u * (u**2 + A*u + 1)
+    fe_sq(t0, u0);                // t0        = u ** 2
+    fe_mul(t1, A, u0);            // t1        = A * u
+    fe_add(t0, t0, t1);           // t0        = u**2 + A*u
+    fe_add(t0, t0, o0);           // t0        = u**2 + A*u + 1
+    fe_mul(w, u0, t0);            // w         = u * (u**2 + A*u + 1)
 
+    // 3. (sqr, e) = (v, legendre(w))
+    fe_sqr_legendre(sqr, e1, w);  // (sqr, e1) = (v, lengendre(w))
+    fe_copy(e2, e1);              // e2        = e1
 
-      /*
-      by h;
-      fe_tobytes(h, y);
-      h[31] |= x0;
-      */
+    // 4. v   = u             e == 1
+    //    w2  = w             e == 1
+    //    v   = -A - u        e == -1
+    //    w2  = ur^2w         e == -1
+    fe_sub(u1, u1, A);            // u1        = -A
+    fe_sub(u1, u1, u0);           // u1        = -A - u
 
-    // 15. encode point
+    e1[0] = (e1[0] + 1) & 2;
+    b = e1[0] >> 1;  // e         = {0,1} for cmove
+    fe_cmov(u1, u0, b);
+    fe_copy(uf, u1);              // v         = uf
 
-    ge_p1p1 hc;
-    ge_p2 hp;
+    fe_sq2(w2, r);                // w2        = 2 * r ** 2
+    fe_mul(w2, w2, w);            // w2        = 2 * r ** 2 * (u ** 3 + A * u ** 2 + u)
+    fe_cmov(w2, w, b);            // w2
 
-    fe_copy(hp.X, uf);
-    fe_copy(hp.Y, y);
-    fe_1(hp.Z);
+    // 5. sqr = sqr           e == 1
+    //    sqr = sqr*r2^(1/2)  e == -1
+    fe_mul(u252m2, u252m2, r);
+    fe_cmov(u252m2, o1, b);
+    fe_mul(sqr, sqr, u252m2);     // sqr
 
+    // 6. sqr = sqr             sqr ** 2 == w2
+    //    sqr = sqr * 1^(1/2)   sqr ** 2 != w2
+    fe_sq(sqr2, sqr);
+    b = !(fe_parity(sqr2) ^ fe_parity(w2));    // Inverted for some reason. 0 if they differ (good). 1 if they are the same (bad)
+    fe_cmov(o1, sqrtm1, b);
+    fe_mul(sqr, sqr, o1);         // sqr
 
-    // 16. out_point = (uf, y) ^ 8
-    ge_p2_dbl(&hc, &hp);
-    ge_p1p1_to_p2(&hp, &hc);
-    ge_p2_dbl(&hc, &hp);
-    ge_p1p1_to_p2(&hp, &hc);
-    ge_p2_dbl(&hc, &hp);
-    ge_p1p1_to_p2(&hp, &hc);
+    // 7. Y   = uf - 1
+    //    T   = uf + 1
+    fe_sub(t0, uf, o0);           // t0        = uf - 1
+    fe_add(t1, uf, o0);           // t1        = uf + 1
+    fe_copy(p1p1.Y, t0);          // Y         = t0
+    fe_copy(p1p1.T, t1);          // T         = t1
 
-    ge_tobytes(out_point, &hp);
+    // 8. X   = uf * A^(1/2)
+    //    Z   = sqr
+    fe_mul(sqA, sqA, uf);         // sqA       = uf * A^(1/2)
 
-/*
-    uint8_t cofactor[32] = {0};
-    cofactor[0] = 8;
-    x25519_scalar_mult(h, cofactor, out_point);
-*/
+    // absolute value of (X/Z)
+    fe_invert(t0, sqr);
+    fe_mul(t0, t0, sqA);
+    fe_neg(t1, sqr);
+    b = fe_parity(t0);
+    fe_cmov(sqr, t1, b);
+
+    fe_copy(p1p1.X, sqA);         // X         = sqA
+    fe_copy(p1p1.Z, sqr);         // Z         = sqr
+
+    // 9. pio2 = p1p1
+    ge_p1p1_to_p2(&p2, &p1p1);
+
+    // 10. pio2 = 8 * pio2
+    ge_p2_dbl(&p1p1, &p2);
+    ge_p1p1_to_p2(&p2, &p1p1);
+    ge_p2_dbl(&p1p1, &p2);
+    ge_p1p1_to_p2(&p2, &p1p1);
+    ge_p2_dbl(&p1p1, &p2);
+    ge_p1p1_to_p2(&p2, &p1p1);
+
+    // 11. piopoint = pio2
+    ge_tobytes(out_point, &p2);
+    by_print(out_point);
 }
 
 static void elligator2_cofactor_mult(by out, by in)
