@@ -297,8 +297,7 @@ static unsigned int fe_parity(const fe h){
 }
 
 static void elligator2_ed25519(const uint8_t *data, size_t size,
-                       by public_key,
-                      by out_point)
+                       by public_key, by out_point)
 {
     static const uint8_t SUITE  = 0x04;
     static const uint8_t ONE    = 0x01;
@@ -322,7 +321,7 @@ static void elligator2_ed25519(const uint8_t *data, size_t size,
 
     //uint8_t x0 = truncatedHash[31] & 0x80;
     truncatedHash[31] &= 0x7f;
-    by_print(truncatedHash);
+    //by_print(truncatedHash);
 
     fe r;
     fe_frombytes(r, truncatedHash);
@@ -457,7 +456,7 @@ static void elligator2_ed25519(const uint8_t *data, size_t size,
 
     // 11. piopoint = pio2
     ge_tobytes(out_point, &p2);
-    by_print(out_point);
+    //by_print(out_point);
 }
 
 static void elligator2_cofactor_mult(by out, by in)

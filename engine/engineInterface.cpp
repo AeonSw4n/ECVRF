@@ -23,7 +23,6 @@ int main(int argc, const char* argv[] ) {
         exit(1);
     }
     printf("Engine successfully loaded\n");
-
     int init_res = ENGINE_init(ecvrf);
     printf("Engine name: %s init result : %d \n", ENGINE_get_id(ecvrf), init_res);
     return 0;

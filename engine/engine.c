@@ -1,20 +1,64 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <openssl/engine.h>
 #include "../lib/engine.h"
+#include "../lib/env.h"
+#define ELLIGATOR2_TESTS ROOT "/engine/tests.txt"
 
 static const char *engine_id = "ecvrf";
 static const char *engine_name = "OpenSSL engine implementing ECVRF!";
 
 int ecvrf_init(ENGINE *e){
-  //test_fe_legendre();
-  //test_elligator_2();
-  uint8_t data[2] = {175, 130};
-  uint8_t *PK  = "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025";
-  by in;
-  by_fromstr(in, PK);
-  //by_print(in);
-  by out;
-  elligator2_ed25519(data, 2, in, out);
+
+  FILE *fp;
+  fp = fopen(ELLIGATOR2_TESTS, "r");
+  if (fp == NULL)
+  {
+     perror("Error while opening the file.\n");
+     exit(EXIT_FAILURE);
+  }
+  int counter = 0;
+  int passed = 0;
+  uint8_t line[256];
+  while(fgets(line, 256, fp) != NULL && counter < 2000){
+    by PK;
+    by_fromstr(PK, line);
+
+    fgets(line, 256, fp);
+    uint32_t len;
+    sscanf(line, "%d %s", &len, line);
+
+    for(uint8_t i=0; i<len;i++){
+      const char b[2] = {line[2*i], line[2*i+1]};
+      uint32_t xc32;
+      sscanf(b, "%2x", &xc32);
+      line[i] = (uint8_t)(xc32&255);
+    }
+    by out;
+    elligator2_ed25519(line, len, PK, out);
+
+    by K;
+    fgets(line, 256, fp);
+    by_fromstr(K, line);
+
+    uint8_t A = by_cmp(out, K);
+    if(A == 0){
+      printf("--------------------\n");
+      printf("ERROR ON TEST: %d\n", counter);
+      printf("RECEIVED: ");
+      by_print(out);
+      printf("EXPECTED: ");
+      by_print(K);
+      printf("--------------------\n");
+    }
+    else{
+      printf("---TEST %d PASSED---\n", counter);
+      passed++;
+    }
+    fgets(line, 256, fp);
+    counter++;
+  }
+  printf("\n\n Passed/Counter: %d/%d\n", passed, counter);
   return 1;
 
  end:
@@ -25,7 +69,6 @@ int ecvrf_init(ENGINE *e){
 static int bind(ENGINE *e, const char *id)
 {
   int ret = 0;
-
   if (!ENGINE_set_id(e, engine_id)) {
     fprintf(stderr, "ENGINE_set_id failed\n");
     goto end;

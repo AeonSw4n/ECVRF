@@ -10,5 +10,5 @@ static void by_fromstrbe(by s, const uint8_t* str);
 static void by_fromstrc(by s, const uint8_t* str,
                       const uint8_t count);
 static void by_fromint(by s, int32_t x);
-
+static uint8_t by_cmp(by x, by y);
 #endif /* ECVRFBY_H_ */

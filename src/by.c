@@ -48,3 +48,11 @@ static void by_fromint(by s, int32_t x)
   }
 
 }
+
+static uint8_t by_cmp(by x, by y)
+{
+  for(uint32_t i=0; i<32; i++)
+    if(x[i] != y[i])
+      return 0;
+  return 1;
+}
