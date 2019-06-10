@@ -13,7 +13,6 @@ static void fe_sqAp2(fe out);
 static void fe_u252m2(fe out);
 static void fe_legendre_fromby(fe a, by b);
 static uint32_t fe_legendre_ifromby(by b);
-static void elligator2_ed25519(const uint8_t *data, size_t size,
-                       by public_key, by out_point);
-static void elligator2_cofactor_mult(by out, by in);
+static void elligator2_ed25519(by out_point, const uint8_t *data,
+                  size_t size, by public_key);
 #endif /* ECVRFELLIGATOR2_H_ */

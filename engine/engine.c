@@ -9,7 +9,13 @@ static const char *engine_id = "ecvrf";
 static const char *engine_name = "OpenSSL engine implementing ECVRF!";
 
 int ecvrf_init(ENGINE *e){
-
+  uint8_t pi[80];
+  const uint8_t x_raw[64] = "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7";
+  by x;
+  by_fromstr(x, x_raw);
+  uint8_t alpha[2] = {0xaf, 0x82};
+  ECVRF_prove(pi, x, alpha);
+  /*
   FILE *fp;
   fp = fopen(ELLIGATOR2_TESTS, "r");
   if (fp == NULL)
@@ -35,7 +41,7 @@ int ecvrf_init(ENGINE *e){
       line[i] = (uint8_t)(xc32&255);
     }
     by out;
-    elligator2_ed25519(line, len, PK, out);
+    elligator2_ed25519(out, line, len, PK);
 
     by K;
     fgets(line, 256, fp);
@@ -59,6 +65,7 @@ int ecvrf_init(ENGINE *e){
     counter++;
   }
   printf("\n\n Passed/Counter: %d/%d\n", passed, counter);
+  */
   return 1;
 
  end:

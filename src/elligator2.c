@@ -296,8 +296,8 @@ static unsigned int fe_parity(const fe h){
   return (unsigned int) ((uint8_t)(h0) & 1);
 }
 
-static void elligator2_ed25519(const uint8_t *data, size_t size,
-                       by public_key, by out_point)
+static void elligator2_ed25519(by out_point, const uint8_t *data,
+                  size_t size, by public_key)
 {
     static const uint8_t SUITE  = 0x04;
     static const uint8_t ONE    = 0x01;
@@ -457,9 +457,4 @@ static void elligator2_ed25519(const uint8_t *data, size_t size,
     // 11. piopoint = pio2
     ge_tobytes(out_point, &p2);
     //by_print(out_point);
-}
-
-static void elligator2_cofactor_mult(by out, by in)
-{
-
 }
