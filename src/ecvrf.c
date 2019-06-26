@@ -101,7 +101,7 @@ static void fe_cswap(fe f, fe g, unsigned int b)
 
 static void montgomery_ladder(uint8_t out_x2[32], uint8_t out_x3[32], unsigned *out_b,
                                        const uint8_t scalar[32],
-                                       const uint8_t point[32]) {
+                                       const uint8_t in_x[32]) {
     fe x1, x2, z2, x3, z3, tmp0, tmp1;
     uint8_t e[32];
     unsigned swap = 0;
@@ -111,7 +111,7 @@ static void montgomery_ladder(uint8_t out_x2[32], uint8_t out_x3[32], unsigned *
     //e[0] &= 248;
     //e[31] &= 127;
     //e[31] |= 64;
-    fe_frombytes(x1, point);
+    fe_frombytes(x1, in_x);
     fe_1(x2);
     fe_0(z2);
     fe_copy(x3, x1);
@@ -192,8 +192,42 @@ static void double_add_scalar_mult(uint8_t out[32],
 }
 
 
+static void fast_add(ge_p3 *out, ge_p3 *in, ge_p2 *h)
+{
+  fe A,B,C,D,E,F,G,H;
+  fe_sub(A, in->Y, in->X);
+  fe_add(B, h->Y, h->X);
+  fe_mul(A, A, B);
+  fe_add(B, in->Y, in->X);
+  fe_sub(C, h->Y, h->X);
+  fe_mul(B, B, C);
+  fe_add(C, in->Z, in->Z);
+  //fe_mul(C, C, h->T)
+}
+
+
+static void double_scalar_fixed_point_mult(ge_p3 out1, ge_p3 out2, ge_p2 H,
+                                              const uint8_t scalar1[32], const uint8_t scalar2[32])
+{
+  ge_p3 sum[4];
+  int pos;
+  for(pos = 0; pos < 4; ++pos)
+    ge_p3_0(&sum[pos]);
+
+
+  for(pos = 0; pos < 255; ++pos){
+    unsigned b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
+    unsigned b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
+    ge_p1p1 temp;
+    ge_p2_dbl(&temp, &H);
+    ge_p1p1_to_p2(&H, &temp);
+
+
+  }
+}
+
 static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
-                    const uint8_t* alpha)
+                    const uint8_t* alpha, const uint8_t alpha_len)
 {
   printf("----- SK -----\n");
   by_print(SK);
@@ -226,10 +260,13 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
 
   //2.  H = ECVRF_hash_to_curve(suite_string, Y, alpha_string)
   //3.  h_string = point_to_string(H)
-  by H;
-  elligator2_ed25519(H, alpha, 2, y);
+  ge_p3 H;
+  by H_string, mUb;
+  elligator2_ed25519(&H, H_string, mUb, alpha, alpha_len, y);
+  //by H_string;
+  //ge_p3_tobytes(H_string, &H);
   printf("----- H -----\n");
-  by_print(H);
+  by_print(H_string);
   printf("\n");
 
   //4.  gamma = x*H
@@ -242,37 +279,20 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   SHA512_CTX nonce_ctx;
   SHA512_Init(&nonce_ctx);
   SHA512_Update(&nonce_ctx, hash + 32, 32);
-  SHA512_Update(&nonce_ctx, H, 32);
+  SHA512_Update(&nonce_ctx, H_string, 32);
   SHA512_Final(nonce, &nonce_ctx);
+
+
   printf("----- k -----\n");
   by_print(nonce);
   x25519_sc_reduce(nonce);
   ge_scalarmult_base(&p3, nonce);
   ge_p3_tobytes(kB, &p3);
-  ge_p3 Hp3;
-  ge_p1p1 Hp1;
-  ge_frombytes_vartime(&Hp3, H);
-  ge_p3_dbl(&Hp1, &Hp3);
-  ge_p1p1_to_p3(&Hp3, &Hp1);
-  ge_p3_dbl(&Hp1, &Hp3);
-  ge_p1p1_to_p3(&Hp3, &Hp1);
-  ge_p3_dbl(&Hp1, &Hp3);
-  ge_p1p1_to_p3(&Hp3, &Hp1);
-  by YH;
-  ge_p3_tobytes(YH, &Hp3);
-/*  fe_copy(Hy2, Hp3.Z);
-  fe_invert(Hy2, Hy2);
-  fe_mul(Hy2, Hy2, Hp3.Y);
-  printf("Y\n");
-  //print_fe(Hy2);
-  by testH;
-  fe_tobytes(testH, Hy2);
-  by_print(testH);
-  fe_tobytes(testH, Hy);
-  by_print(testH);
-  printf("\n");*/
-  fe Hy;
-  fe_frombytes(Hy, H);
+
+  fe t0, t1;
+  fe_1(t1);
+  /*fe Hy;
+  fe_frombytes(Hy, H_string);
   fe t0, t1;
   fe U, Z;
   fe_1(t1);
@@ -291,40 +311,10 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   by mUb;
   fe_invert(mU, Z);
   fe_mul(mU, mU, U);
-  fe_tobytes(mUb, mU);
+  fe_tobytes(mUb, mU);*/
   by out_x2, out_x3;  //montgomery |nP|, |(n+1)P|
   unsigned out_b = 0;
   montgomery_ladder(out_x2, out_x3, &out_b, nonce, mUb);
-
-
-  for(int i=0;i<3;i++){
-    fe_sq(U2, U);         // U2 = U^2
-    fe_copy(t0, U2);      // t0 = U^2
-    fe_sq(Z2, Z);         // Z2 = Z^2
-    fe_sub(U2, U2, Z2);   // U2 = U^2 - Z^2
-    fe_sq(U2, U2);        // U2 = (U^2 - Z^2)^2
-    fe_add(Z2, Z2, t0);   // Z2 = Z^2 + U^2
-    elligator_fe_A(t0);   // t0 = A
-    fe_mul(t1, U, Z);     // t1 = U*Z
-    fe_mul(t0, t0, t1);   // t0 = A*U*Z
-    fe_add(Z2, Z2, t0);   // Z2 = Z^2 + A*U*Z + U^2
-    fe_mul(Z2, Z2, t1);   // Z2 = U*Z*(Z^2 + A*U*Z + U^2)
-    fe_mul(Z2, Z2, f4);   // Z2 = 4*U*Z*(Z^2 + A*U*Z + U^2)
-    fe_copy(U, U2);
-    fe_copy(Z, Z2);
-  }
-
-  fe_invert(Z, Z);
-  fe_mul(U, U, Z);
-  fe_1(t1);
-  fe_add(Z, U, t1);
-  fe_invert(Z, Z);
-  fe_sub(U, U, t1);
-  fe_mul(U, U, Z);
-  fe Y;
-  fe_copy(Y, U);
-  by Y2;
-  fe_tobytes(Y2, Y);
 
   fe x2_fe, x3_fe;
   fe_frombytes(x2_fe, out_x2);
@@ -337,10 +327,40 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   ge_p3 x2_p3, x3_p3;
   ge_p1p1 x3_p1;
   ge_frombytes_vartime(&x2_p3, x2_by);
-  ge_p3 p_p3;
+  print_fe(x2_p3.X);
+  //fe_neg(x2_p3.X, x2_p3.X);
+  //fe_neg(x2_p3.T, x2_p3.T);
+  print_fe(x2_p3.X);
   ge_cached p_ca;
-  ge_frombytes_vartime(&p_p3, H);
-  ge_p3_to_cached(&p_ca, &p_p3);
+  ge_p3 H_p3;
+  ge_frombytes_vartime(&H_p3, H_string);
+  ge_p3_to_cached(&p_ca, &H);
+
+  ge_p3 x2_p3_test;
+  ge_p1p1 x2_p1_test;
+  by x2_by_test;
+  fe_neg(x2_p3_test.X, x2_p3.X);
+  fe_neg(x2_p3_test.T, x2_p3.T);
+  fe_copy(x2_p3_test.Y, x2_p3.Y);
+  fe_copy(x2_p3_test.Z, x2_p3.Z);
+  ge_add(&x2_p1_test, &x2_p3_test, &p_ca);
+  ge_p1p1_to_p3(&x2_p3_test, &x2_p1_test);
+  ge_p3_tobytes(x2_by_test, &x2_p3_test);
+  /*ge_p1p1 ap1, bp1;
+  ge_p3 ap3, bp3;
+  by aby, bby;
+  by wtf;
+  ge_p3_tobytes(wtf, &H);
+  by_print(wtf);
+  ge_add(&ap1, &H, &p_ca);
+  ge_p3_dbl(&bp1, &H);
+  ge_p1p1_to_p3(&ap3, &ap1);
+  ge_p1p1_to_p3(&bp3, &bp1);
+  ge_p3_tobytes(aby, &ap3);
+  ge_p3_tobytes(bby, &bp3);
+  printf("\n");
+  by_print(aby);
+  by_print(bby);*/
   ge_add(&x3_p1, &x2_p3, &p_ca);
   ge_p1p1_to_p3(&x3_p3, &x3_p1);
   fe_frombytes(x3_fe, out_x3);
@@ -349,10 +369,42 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   fe_sub(x3_fe, x3_fe, t1);
   fe_mul(x3_fe, x3_fe, t0);
   fe_tobytes(x3_by, x3_fe);
+
+  ge_p3 test_p3, test2_p3;
+  ge_p1p1 test_p1p1, test2_p1p1;
+  ge_cached test_ca, test2_ca;
+  by test_by, test2_by;
+  ge_frombytes_vartime(&test_p3, x3_by);
+  //ge_p3_tobytes(test_by, &test_p3);
+  //by_print(test_by);
+  fe_copy(test2_p3.X, test_p3.X);
+  fe_copy(test2_p3.Y, test_p3.Y);
+  fe_copy(test2_p3.Z, test_p3.Z);
+  fe_copy(test2_p3.T, test_p3.T);
+  fe_neg(x2_p3.X, x2_p3.X);
+  fe_neg(x2_p3.T, x2_p3.T);
+  ge_p3_to_cached(&test_ca, &x2_p3);
+  fe_neg(x2_p3.X, x2_p3.X);
+  fe_neg(x2_p3.T, x2_p3.T);
+  ge_p3_to_cached(&test2_ca, &x2_p3);
+  ge_add(&test_p1p1, &test_p3, &test_ca);
+  ge_add(&test2_p1p1, &test2_p3, &test2_ca);
+  ge_p1p1_to_p3(&test_p3, &test_p1p1);
+  ge_p1p1_to_p3(&test2_p3, &test2_p1p1);
+  ge_p3_tobytes(test_by, &test_p3);
+  ge_p3_tobytes(test2_by, &test2_p3);
+  printf("\n HERE \n");
+  by_print(test_by);
+  by_print(test2_by);
+
   by x3n_by;
   ge_p3_tobytes(x3n_by, &x3_p3);
   x3n_by[31] &= 0x7f;
   unsigned eq = 1;
+  printf("\n");
+  by_print(x3n_by);
+  by_print(x3_by);
+  by_print(x2_by_test);
   for(int i=0; i<32; i++){
     if(x3_by[i] != x3n_by[i]){
       printf("\nUNEQ ON I: %d\n",i);
@@ -471,7 +523,7 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   SHA512_Init(&c_ctx);
   SHA512_Update(&c_ctx, &SUITE, 1);
   SHA512_Update(&c_ctx, &TWO, 1);
-  SHA512_Update(&c_ctx, H, 32);
+  SHA512_Update(&c_ctx, H_string, 32);
   SHA512_Update(&c_ctx, gamma, 32);
   SHA512_Update(&c_ctx, kB, 32);
   SHA512_Update(&c_ctx, kH, 32);

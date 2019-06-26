@@ -296,7 +296,7 @@ static unsigned int fe_parity(const fe h){
   return (unsigned int) ((uint8_t)(h0) & 1);
 }
 
-static void elligator2_ed25519(by out_point, const uint8_t *data,
+static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_point_mont, const uint8_t *data,
                   size_t size, by public_key)
 {
     static const uint8_t SUITE  = 0x04;
@@ -325,6 +325,11 @@ static void elligator2_ed25519(by out_point, const uint8_t *data,
 
     fe r;
     fe_frombytes(r, truncatedHash);
+    printf("----- r -----\n");
+    by rby;
+    fe_tobytes(rby, r);
+    by_print(rby);
+    printf("\n");
 
     // Montgomery constant A
     fe A;
@@ -434,12 +439,12 @@ static void elligator2_ed25519(by out_point, const uint8_t *data,
     fe_mul(sqA, sqA, uf);         // sqA       = uf * A^(1/2)
 
     // absolute value of (X/Z)
-    fe_invert(t0, sqr);
+/*  fe_invert(t0, sqr);
     fe_mul(t0, t0, sqA);
     fe_neg(t1, sqr);
     b = fe_parity(t0);
     fe_cmov(sqr, t1, b);
-
+*/
     fe_copy(p1p1.X, sqA);         // X         = sqA
     fe_copy(p1p1.Z, sqr);         // Z         = sqr
 
@@ -452,9 +457,45 @@ static void elligator2_ed25519(by out_point, const uint8_t *data,
     ge_p2_dbl(&p1p1, &p2);
     ge_p1p1_to_p2(&p2, &p1p1);
     ge_p2_dbl(&p1p1, &p2);
-    ge_p1p1_to_p2(&p2, &p1p1);
+    //ge_p1p1_to_p2(&p2, &p1p1);
 
     // 11. piopoint = pio2
-    ge_tobytes(out_point, &p2);
+    //ge_tobytes(out_point, &p2);
     //by_print(out_point);
+    ge_p1p1_to_p3(out_point, &p1p1);
+
+    fe minvert;
+    fe temp, temp2;
+    fe_copy(minvert, sqr);                    // minvert = sqr
+    fe_mul(minvert, minvert, out_point->Z);    // minvert = sqr*Z
+    fe_copy(temp, out_point->Z);               // temp = Z
+    fe_sub(temp, temp, out_point->Y);          // temp = Z-Y
+    fe_mul(minvert, minvert, temp);           // minvert = sqr*Z*(Z-Y)
+    fe_invert(minvert, minvert);              // minvert = (sqr * Z * (Z-Y))^-1
+    fe sign;
+    fe_mul(t0, minvert, temp);                // t0 = (sqr * Z)^-1
+    fe_mul(sign, t0, out_point->Z);            // sign = (sqr)^-1
+    fe_mul(sign, sign, sqA);                  // sign = sqA / sqr
+    fe_neg(t1, out_point->X);
+    fe_neg(temp2, out_point->T);
+    b = fe_parity(sign);
+    fe_cmov(out_point->X, t1, b);              // change sign of 8P.X if sign of P.X was wrong
+    fe_cmov(out_point->T, temp2, b);
+    fe_mul(sign, t0, sqr);                     // sign = (Z)^-1
+    fe_mul(t1, sign, out_point->Y);            // t1 = Y/Z
+    fe_mul(sign, sign, out_point->X);          // sign = X/Z
+    //fe_copy(out_point->X, sign);
+    //fe_copy(out_point->Y, t1);
+    //fe_1(out_point->Z);
+    //fe_mul(out_point->T, sign, t1);
+    fe_tobytes(out_point_bytes, t1);
+    out_point_bytes[31] ^= fe_isnegative(sign) << 7;
+    fe_mul(minvert, minvert, sqr);            // minvert = (Z*(Z-Y))^-1
+    fe_mul(minvert, minvert, out_point->Z);    // minvert = (Z-Y)^-1
+    fe_copy(temp, out_point->Z);               // temp = Z
+    fe_add(temp, temp, out_point->Y);          // temp = Z+Y
+    fe_mul(minvert, minvert, temp);           // minvert = (Z+Y)/(Z-Y)
+    fe_tobytes(out_point_mont, minvert);
+
+
 }

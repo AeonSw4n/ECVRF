@@ -10,11 +10,19 @@ static const char *engine_name = "OpenSSL engine implementing ECVRF!";
 
 int ecvrf_init(ENGINE *e){
   uint8_t pi[80];
-  const uint8_t x_raw[64] = "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7";
+  const uint8_t x_raw[64] = "5735f28b16c6b0684e6787866ef296a0787f1b4760d8101e090a533e04df1015";
   by x;
   by_fromstr(x, x_raw);
-  uint8_t alpha[2] = {0xaf, 0x82};
-  ECVRF_prove(pi, x, alpha);
+  uint32_t alpha_len = 30;
+  const uint8_t alpha_raw[60] = "f4599e95b49f18923bc5a7939e35980a062e2573445a79601964ed2753ba";
+  uint8_t alpha[30];
+  for(uint8_t i=0; i<alpha_len;i++){
+    const char b[2] = {alpha_raw[2*i], alpha_raw[2*i+1]};
+    uint32_t xc32;
+    sscanf(b, "%2x", &xc32);
+    alpha[i] = (uint8_t)(xc32&255);
+  }
+  ECVRF_prove(pi, x, alpha, alpha_len);
   /*
   FILE *fp;
   fp = fopen(ELLIGATOR2_TESTS, "r");
