@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "../lib/ecvrf.h"
 
+//#define DEBUG
 
 /*
       F - finite field
@@ -99,9 +100,9 @@ static void fe_cswap(fe f, fe g, unsigned int b)
     }
 }
 
-static void montgomery_ladder(uint8_t out_x2[32], uint8_t out_x3[32], unsigned *out_b,
-                                       const uint8_t scalar[32],
-                                       const uint8_t in_x[32]) {
+static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe out_z3[32],
+                                       const uint8_t scalar[32], const uint8_t in_x[32])
+{
     fe x1, x2, z2, x3, z3, tmp0, tmp1;
     uint8_t e[32];
     unsigned swap = 0;
@@ -145,17 +146,64 @@ static void montgomery_ladder(uint8_t out_x2[32], uint8_t out_x3[32], unsigned *
     }
     fe_cswap(x2, x3, swap);
     fe_cswap(z2, z3, swap);
-    //printf("\n");
-    //printf("swap: %d \n", swap);
-    fe_invert(z2, z2);
-    fe_mul(x2, x2, z2);
-    fe_invert(z3, z3);
-    fe_mul(x3, x3, z3);
-    fe_tobytes(out_x2, x2);
-    fe_tobytes(out_x3, x3);
-    *out_b = swap;
+
+    fe_copy(out_x2, x2);
+    fe_copy(out_z2, z2);
+    fe_copy(out_x3, x3);
+    fe_copy(out_z3, z3);
 
     OPENSSL_cleanse(e, sizeof(e));
+}
+
+//can't find any way to combine square rooting
+//inversion and square root can be combined by (x^8 y)^(2^252-3)*x^3 for sqr, and then finding y^(2^255-2^252-17)=y^(7*2^252-17)=(y^(2^252-3)^7)*y^4 for the inv
+//can save one inversion combining two ladders
+//with inversion optimization, total added cost is 3 exponentiations, with inv/sqr total is 2
+//tobytes adds 2 more inversions to the total
+static void montgomery_ladder_to_edwards(uint8_t out[32],
+                                       const uint8_t scalar[32],
+                                       const uint8_t in_x[32], const ge_p3 *in_P) {
+    fe x2, z2, x3, z3;
+    montgomery_ladder(x2, z2, x3, z3, scalar, in_x);
+    by x2_by, x3_by, x3n_by;
+    fe x2_ed, x3_ed, x3n_ed;
+    fe temp;
+    fe t0, t1;
+    fe_add(t0, x2, z2);
+    fe_add(t1, x3, z3);
+    fe_mul(temp, t0, t1);
+    fe_invert(temp, temp);
+
+    fe_mul(t1, temp, t1);
+    fe_sub(x2_ed, x2, z2);
+    fe_mul(x2_ed, t1, x2_ed);
+
+    fe_mul(t0, temp, t0);
+    fe_sub(x3_ed, x3, z3);
+    fe_mul(x3_ed, t0, x3_ed);
+
+    fe_tobytes(x2_by, x2_ed);
+
+    ge_p3 x2_p3, x3n_p3;
+    ge_p1p1 x3n_p1;
+    ge_frombytes_vartime(&x2_p3, x2_by);
+
+    ge_cached p_ca;
+    ge_p3_to_cached(&p_ca, in_P);
+
+    ge_add(&x3n_p1, &x2_p3, &p_ca);
+    ge_p1p1_to_p3(&x3n_p3, &x3n_p1);
+    ge_p3_tobytes(x3n_by, &x3n_p3);
+    fe_frombytes(x3n_ed, x3n_by);
+
+    fe f;
+    fe_sub(f, x3_ed, x3n_ed);
+    // eq = 0   when x3_ed - x3n_ed   = 0
+    // eq = 1   when x3_ed - x3n_ed  != 0
+    unsigned eq = fe_isnonzero(f);
+    memcpy(out, x2_by, 32);
+    out[31] ^= eq<<7;
+
 }
 
 
@@ -206,32 +254,49 @@ static void fast_add(ge_p3 *out, ge_p3 *in, ge_p2 *h)
 }
 
 
-static void double_scalar_fixed_point_mult(ge_p3 out1, ge_p3 out2, ge_p2 H,
+static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
                                               const uint8_t scalar1[32], const uint8_t scalar2[32])
 {
   ge_p3 sum[4];
+  ge_p1p1 tp1;
+  ge_cached tca;
+
   int pos;
   for(pos = 0; pos < 4; ++pos)
     ge_p3_0(&sum[pos]);
 
 
   for(pos = 0; pos < 255; ++pos){
-    unsigned b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
-    unsigned b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
-    ge_p1p1 temp;
-    ge_p2_dbl(&temp, &H);
-    ge_p1p1_to_p2(&H, &temp);
+    unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
+    unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
 
+    ge_p3_to_cached(&tca, &H);
+    ge_add(&tp1, &sum[b1 + 2*b2], &tca);
+    ge_p1p1_to_p3(&sum[b1 + 2*b2], &tp1);
+    ge_p3_dbl(&tp1, &H);
+    ge_p1p1_to_p3(&H, &tp1);
 
   }
+
+  ge_p3_to_cached(&tca, &sum[3]);
+  ge_add(&tp1, &sum[1], &tca);
+  ge_p1p1_to_p3(&sum[1], &tp1);
+  ge_add(&tp1, &sum[2], &tca);
+  ge_p1p1_to_p3(&sum[2], &tp1);
+
+  ge_p3_tobytes(out1, &sum[1]);
+  ge_p3_tobytes(out2, &sum[2]);
 }
 
 static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
                     const uint8_t* alpha, const uint8_t alpha_len)
 {
+#ifdef DEBUG
   printf("----- SK -----\n");
   by_print(SK);
   printf("\n");
+#endif
+
   //1.  Use SK to derive the VRF secret scalar x and the VRF public key Y = x*B
   uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
   SHA512_CTX hash_ctx;
@@ -246,17 +311,22 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   truncatedHash[31] &= 0x7F;
   truncatedHash[31] |= 0x40;
 
+#ifdef DEBUG
   printf("----- x -----\n");
   by_print(truncatedHash);
   printf("\n");
+#endif
 
   ge_p3 p3;
   by y;
   ge_scalarmult_base(&p3, truncatedHash);
   ge_p3_tobytes(y, &p3);
+
+#ifdef DEBUG
   printf("----- PK -----\n");
   by_print(y);
   printf("\n");
+#endif
 
   //2.  H = ECVRF_hash_to_curve(suite_string, Y, alpha_string)
   //3.  h_string = point_to_string(H)
@@ -265,9 +335,12 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   elligator2_ed25519(&H, H_string, mUb, alpha, alpha_len, y);
   //by H_string;
   //ge_p3_tobytes(H_string, &H);
+
+#ifdef DEBUG
   printf("----- H -----\n");
   by_print(H_string);
   printf("\n");
+#endif
 
   //4.  gamma = x*H
   //by gamma;
@@ -282,237 +355,30 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   SHA512_Update(&nonce_ctx, H_string, 32);
   SHA512_Final(nonce, &nonce_ctx);
 
-
+#ifdef DEBUG
   printf("----- k -----\n");
   by_print(nonce);
+  printf("\n");
+#endif
+
   x25519_sc_reduce(nonce);
   ge_scalarmult_base(&p3, nonce);
   ge_p3_tobytes(kB, &p3);
 
-  fe t0, t1;
-  fe_1(t1);
-  /*fe Hy;
-  fe_frombytes(Hy, H_string);
-  fe t0, t1;
-  fe U, Z;
-  fe_1(t1);
-  fe_sub(Z, t1, Hy);    // Z = 1 - Y
-  fe_add(U, t1, Hy);    // U = 1 + Y
-  fe U2, Z2;
-  fe f4;
-  fe_1(f4);
-  fe_add(f4, f4, f4);
-  fe_add(f4, f4, f4);   // f4 = 4
-  fe s8;
-  fe_add(s8, f4, f4);
-  by s8b;
-  fe_tobytes(s8b, s8);
-  fe mU;
-  by mUb;
-  fe_invert(mU, Z);
-  fe_mul(mU, mU, U);
-  fe_tobytes(mUb, mU);*/
-  by out_x2, out_x3;  //montgomery |nP|, |(n+1)P|
-  unsigned out_b = 0;
-  montgomery_ladder(out_x2, out_x3, &out_b, nonce, mUb);
 
-  fe x2_fe, x3_fe;
-  fe_frombytes(x2_fe, out_x2);
-  fe_add(t0, x2_fe, t1);
-  fe_invert(t0, t0);
-  fe_sub(x2_fe, x2_fe, t1);
-  fe_mul(x2_fe, x2_fe, t0);
-  by x2_by, x3_by;
-  fe_tobytes(x2_by, x2_fe);
-  ge_p3 x2_p3, x3_p3;
-  ge_p1p1 x3_p1;
-  ge_frombytes_vartime(&x2_p3, x2_by);
-  print_fe(x2_p3.X);
-  //fe_neg(x2_p3.X, x2_p3.X);
-  //fe_neg(x2_p3.T, x2_p3.T);
-  print_fe(x2_p3.X);
-  ge_cached p_ca;
-  ge_p3 H_p3;
-  ge_frombytes_vartime(&H_p3, H_string);
-  ge_p3_to_cached(&p_ca, &H);
-
-  ge_p3 x2_p3_test;
-  ge_p1p1 x2_p1_test;
-  by x2_by_test;
-  fe_neg(x2_p3_test.X, x2_p3.X);
-  fe_neg(x2_p3_test.T, x2_p3.T);
-  fe_copy(x2_p3_test.Y, x2_p3.Y);
-  fe_copy(x2_p3_test.Z, x2_p3.Z);
-  ge_add(&x2_p1_test, &x2_p3_test, &p_ca);
-  ge_p1p1_to_p3(&x2_p3_test, &x2_p1_test);
-  ge_p3_tobytes(x2_by_test, &x2_p3_test);
-  /*ge_p1p1 ap1, bp1;
-  ge_p3 ap3, bp3;
-  by aby, bby;
-  by wtf;
-  ge_p3_tobytes(wtf, &H);
-  by_print(wtf);
-  ge_add(&ap1, &H, &p_ca);
-  ge_p3_dbl(&bp1, &H);
-  ge_p1p1_to_p3(&ap3, &ap1);
-  ge_p1p1_to_p3(&bp3, &bp1);
-  ge_p3_tobytes(aby, &ap3);
-  ge_p3_tobytes(bby, &bp3);
-  printf("\n");
-  by_print(aby);
-  by_print(bby);*/
-  ge_add(&x3_p1, &x2_p3, &p_ca);
-  ge_p1p1_to_p3(&x3_p3, &x3_p1);
-  fe_frombytes(x3_fe, out_x3);
-  fe_add(t0, x3_fe, t1);
-  fe_invert(t0, t0);
-  fe_sub(x3_fe, x3_fe, t1);
-  fe_mul(x3_fe, x3_fe, t0);
-  fe_tobytes(x3_by, x3_fe);
-
-  ge_p3 test_p3, test2_p3;
-  ge_p1p1 test_p1p1, test2_p1p1;
-  ge_cached test_ca, test2_ca;
-  by test_by, test2_by;
-  ge_frombytes_vartime(&test_p3, x3_by);
-  //ge_p3_tobytes(test_by, &test_p3);
-  //by_print(test_by);
-  fe_copy(test2_p3.X, test_p3.X);
-  fe_copy(test2_p3.Y, test_p3.Y);
-  fe_copy(test2_p3.Z, test_p3.Z);
-  fe_copy(test2_p3.T, test_p3.T);
-  fe_neg(x2_p3.X, x2_p3.X);
-  fe_neg(x2_p3.T, x2_p3.T);
-  ge_p3_to_cached(&test_ca, &x2_p3);
-  fe_neg(x2_p3.X, x2_p3.X);
-  fe_neg(x2_p3.T, x2_p3.T);
-  ge_p3_to_cached(&test2_ca, &x2_p3);
-  ge_add(&test_p1p1, &test_p3, &test_ca);
-  ge_add(&test2_p1p1, &test2_p3, &test2_ca);
-  ge_p1p1_to_p3(&test_p3, &test_p1p1);
-  ge_p1p1_to_p3(&test2_p3, &test2_p1p1);
-  ge_p3_tobytes(test_by, &test_p3);
-  ge_p3_tobytes(test2_by, &test2_p3);
-  printf("\n HERE \n");
-  by_print(test_by);
-  by_print(test2_by);
-
-  by x3n_by;
-  ge_p3_tobytes(x3n_by, &x3_p3);
-  x3n_by[31] &= 0x7f;
-  unsigned eq = 1;
-  printf("\n");
-  by_print(x3n_by);
-  by_print(x3_by);
-  by_print(x2_by_test);
-  for(int i=0; i<32; i++){
-    if(x3_by[i] != x3n_by[i]){
-      printf("\nUNEQ ON I: %d\n",i);
-      eq = 0;
-      break;
-    }
-  }
-
-  if(eq == 1){
-    if(out_b == 0){
-      printf("case 1\n");
-      ge_p3_tobytes(kH, &x2_p3);
-    }
-    else{
-      printf("case 2\n");
-      //ge_p3_tobytes(kH, &x3_p3);
-      ge_p3_tobytes(kH, &x2_p3);
-    }
-  }
-  else {
-    if(out_b == 0){
-      printf("case 3\n");
-      ge_p3_tobytes(kH, &x2_p3);
-      kH[31] ^= 0x80;
-    }
-    else{
-      printf("0/1 case\n");
-      /*by_print(x2_by);
-        by_print(x3_by);
-        fe_neg(x2_p3.X, x2_p3.X);
-      /*ge_add(&x3_p1, &x2_p3, &p_ca);
-      ge_p1p1_to_p3(&x3_p3, &x3_p1);
-      ge_p3_tobytes(kH, &x3_p3);*/
-      ge_p3_tobytes(kH, &x2_p3);
-      kH[31] ^= 0x80;
-    }
-  }
+  montgomery_ladder_to_edwards(kH, nonce, mUb, &H);
 
   by gamma;
-  by out_g2, out_g3;
-  montgomery_ladder(out_g2, out_g3, &out_b, truncatedHash, mUb);
-  fe_1(t1);
-  fe g2_fe, g3_fe;
-  fe_frombytes(g2_fe, out_g2);
-  fe_add(t0, g2_fe, t1);
-  fe_invert(t0, t0);
-  fe_sub(g2_fe, g2_fe, t1);
-  fe_mul(g2_fe, g2_fe, t0);
-  by g2_by, g3_by;
-  fe_tobytes(g2_by, g2_fe);
-  ge_p3 g2_p3, g3_p3;
-  ge_p1p1 g3_p1;
-  ge_frombytes_vartime(&g2_p3, g2_by);
-  ge_add(&g3_p1, &g2_p3, &p_ca);
-  ge_p1p1_to_p3(&g3_p3, &g3_p1);
-  fe_frombytes(g3_fe, out_g3);
-  fe_add(t0, g3_fe, t1);
-  fe_invert(t0, t0);
-  fe_sub(g3_fe, g3_fe, t1);
-  fe_mul(g3_fe, g3_fe, t0);
-  fe_tobytes(g3_by, g3_fe);
-  by g3n_by;
-  ge_p3_tobytes(g3n_by, &g3_p3);
-  g3n_by[31] &= 0x7f;
-  eq = 1;
-  for(int i=0; i<32; i++){
-    if(g3_by[i] != g3n_by[i]){
-      printf("\nUNEQ Gamma ON I: %d\n",i);
-      eq = 0;
-      break;
-    }
-  }
-
-  if(eq == 1){
-    if(out_b == 0){
-      printf("case 1\n");
-      ge_p3_tobytes(gamma, &g2_p3);
-    }
-    else{
-      printf("case 2\n");
-      ge_p3_tobytes(gamma, &g3_p3);
-    }
-  }
-  else {
-    if(out_b == 0){
-      printf("case 3\n");
-      ge_p3_tobytes(gamma, &g2_p3);
-      gamma[31] ^= 0x80;
-    }
-    else{
-      printf("0/1 case\n");
-      fe_neg(g2_p3.X, g2_p3.X);
-      ge_add(&g3_p1, &g2_p3, &p_ca);
-      ge_p1p1_to_p3(&g3_p3, &g3_p1);
-      ge_p3_tobytes(gamma, &g3_p3);
-    }
-  }
-  //printf("8H\n");
-  //by_print(YH);
-  //by_print(Y2);
-
-  //by_print(nonce);
+  montgomery_ladder_to_edwards(gamma, truncatedHash, mUb, &H);
+  //double_scalar_fixed_point_mult(kH, gamma, &H, nonce, truncatedHash);
+#ifdef DEBUG
   printf("----- U=k*B -----\n");
   by_print(kB);
   printf("\n");
   printf("----- V=k*H -----\n");
   by_print(kH);
   printf("\n");
+#endif
 
 
   //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
@@ -542,6 +408,8 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   memcpy(pi, gamma, 32);
   memcpy(pi+32, c, 16);
   memcpy(pi+48, s, 32);
+
+#ifdef DEBUG
   printf("----- pi -----\n");
   for(int i=0; i<32; i++)
     printf("%x ", pi[i]);
@@ -552,6 +420,7 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   for(int i=48; i<80; i++)
     printf("%x ", pi[i]);
   printf("\n");
+#endif
 }
 
 static void ECVRF_proof2hash(uint8_t* beta, const uint8_t* pi)

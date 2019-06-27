@@ -3,19 +3,26 @@
 #include <openssl/engine.h>
 #include "../lib/engine.h"
 #include "../lib/env.h"
-#define ELLIGATOR2_TESTS ROOT "/engine/tests.txt"
+
+//#define DEBUG
+#define TESTER
+
+#define ELLIGATOR2_TESTS ROOT "/tests/tests_elligator2.txt"
+#define PROVE_TESTS ROOT "/tests/tests_prove.txt"
 
 static const char *engine_id = "ecvrf";
 static const char *engine_name = "OpenSSL engine implementing ECVRF!";
 
 int ecvrf_init(ENGINE *e){
+
+#ifndef TESTER
   uint8_t pi[80];
-  const uint8_t x_raw[64] = "5735f28b16c6b0684e6787866ef296a0787f1b4760d8101e090a533e04df1015";
+  const uint8_t x_raw[64] = "00014843542f26b56396604025893cd454f8958c0c2245e91e1bca38327931f9";
   by x;
   by_fromstr(x, x_raw);
-  uint32_t alpha_len = 30;
-  const uint8_t alpha_raw[60] = "f4599e95b49f18923bc5a7939e35980a062e2573445a79601964ed2753ba";
-  uint8_t alpha[30];
+  uint32_t alpha_len = 24;
+  const uint8_t alpha_raw[48] = "85f9abc06a7f657655f9a4ed58e31dbccb1731aa2601dd69";
+  uint8_t alpha[24];
   for(uint8_t i=0; i<alpha_len;i++){
     const char b[2] = {alpha_raw[2*i], alpha_raw[2*i+1]};
     uint32_t xc32;
@@ -23,9 +30,13 @@ int ecvrf_init(ENGINE *e){
     alpha[i] = (uint8_t)(xc32&255);
   }
   ECVRF_prove(pi, x, alpha, alpha_len);
-  /*
+  for(int i=0; i<80; i++)
+    printf("%2x", pi[i]);
+#endif
+
+#ifdef TESTER
   FILE *fp;
-  fp = fopen(ELLIGATOR2_TESTS, "r");
+  fp = fopen(PROVE_TESTS, "r");
   if (fp == NULL)
   {
      perror("Error while opening the file.\n");
@@ -34,46 +45,66 @@ int ecvrf_init(ENGINE *e){
   int counter = 0;
   int passed = 0;
   uint8_t line[256];
-  while(fgets(line, 256, fp) != NULL && counter < 2000){
-    by PK;
-    by_fromstr(PK, line);
+  while(fgets(line, 256, fp) != NULL && counter < 10000){
+    by SK;
+    by_fromstr(SK, line);
 
     fgets(line, 256, fp);
     uint32_t len;
     sscanf(line, "%d %s", &len, line);
 
-    for(uint8_t i=0; i<len;i++){
+    uint8_t i;
+    for(i=0; i<len;i++){
       const char b[2] = {line[2*i], line[2*i+1]};
       uint32_t xc32;
       sscanf(b, "%2x", &xc32);
       line[i] = (uint8_t)(xc32&255);
     }
-    by out;
-    elligator2_ed25519(out, line, len, PK);
+    uint8_t pi[80];
+    ECVRF_prove(pi, SK, line, len);
 
-    by K;
     fgets(line, 256, fp);
-    by_fromstr(K, line);
+    for(i=0; i<80;i++){
+      const char b[2] = {line[2*i], line[2*i+1]};
+      uint32_t xc32;
+      sscanf(b, "%2x", &xc32);
+      line[i] = (uint8_t)(xc32&255);
+    }
+    uint8_t A = 1;
+    for(i=0; i<80; i++){
+      if(line[i] != pi[i]){
+        A = 0;
+        break;
+      }
+    }
 
-    uint8_t A = by_cmp(out, K);
+    if(A == 1)
+      passed++;
+
+#ifdef DEBUG
     if(A == 0){
       printf("--------------------\n");
       printf("ERROR ON TEST: %d\n", counter);
       printf("RECEIVED: ");
-      by_print(out);
+      for(i=0; i<80; i++)
+        printf("%2x", pi[i]);
+      printf("\n");
       printf("EXPECTED: ");
-      by_print(K);
+      for(i=0; i<80; i++)
+        printf("%2x", line[i]);
+      printf("\n");
       printf("--------------------\n");
     }
     else{
       printf("---TEST %d PASSED---\n", counter);
-      passed++;
     }
+#endif
+
     fgets(line, 256, fp);
     counter++;
   }
   printf("\n\n Passed/Counter: %d/%d\n", passed, counter);
-  */
+#endif
   return 1;
 
  end:

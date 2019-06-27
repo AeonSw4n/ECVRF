@@ -1,5 +1,7 @@
 #include "../lib/elligator2.h"
 
+//#define DEBUG
+
 static void elligator_fe_A(fe out)
 {
     out[0] = 486662;
@@ -325,11 +327,14 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
 
     fe r;
     fe_frombytes(r, truncatedHash);
+
+#ifdef DEBUG
     printf("----- r -----\n");
     by rby;
     fe_tobytes(rby, r);
     by_print(rby);
     printf("\n");
+  #endif
 
     // Montgomery constant A
     fe A;
@@ -484,10 +489,7 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
     fe_mul(sign, t0, sqr);                     // sign = (Z)^-1
     fe_mul(t1, sign, out_point->Y);            // t1 = Y/Z
     fe_mul(sign, sign, out_point->X);          // sign = X/Z
-    //fe_copy(out_point->X, sign);
-    //fe_copy(out_point->Y, t1);
-    //fe_1(out_point->Z);
-    //fe_mul(out_point->T, sign, t1);
+
     fe_tobytes(out_point_bytes, t1);
     out_point_bytes[31] ^= fe_isnegative(sign) << 7;
     fe_mul(minvert, minvert, sqr);            // minvert = (Z*(Z-Y))^-1
