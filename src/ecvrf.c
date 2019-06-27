@@ -262,19 +262,24 @@ static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], g
   ge_cached tca;
 
   int pos;
-  for(pos = 0; pos < 4; ++pos)
+  for(pos = 0; pos < 4; pos++)
     ge_p3_0(&sum[pos]);
 
+  ge_p3 P;
+  fe_copy(P.X, H->X);
+  fe_copy(P.Y, H->Y);
+  fe_copy(P.Z, H->Z);
+  fe_copy(P.T, H->T);
 
   for(pos = 0; pos < 255; ++pos){
     unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
     unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
 
-    ge_p3_to_cached(&tca, &H);
+    ge_p3_to_cached(&tca, &P);
     ge_add(&tp1, &sum[b1 + 2*b2], &tca);
     ge_p1p1_to_p3(&sum[b1 + 2*b2], &tp1);
-    ge_p3_dbl(&tp1, &H);
-    ge_p1p1_to_p3(&H, &tp1);
+    ge_p3_dbl(&tp1, &P);
+    ge_p1p1_to_p3(&P, &tp1);
 
   }
 
@@ -366,11 +371,11 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   ge_p3_tobytes(kB, &p3);
 
 
-  montgomery_ladder_to_edwards(kH, nonce, mUb, &H);
+  //montgomery_ladder_to_edwards(kH, nonce, mUb, &H);
 
   by gamma;
-  montgomery_ladder_to_edwards(gamma, truncatedHash, mUb, &H);
-  //double_scalar_fixed_point_mult(kH, gamma, &H, nonce, truncatedHash);
+  //montgomery_ladder_to_edwards(gamma, truncatedHash, mUb, &H);
+  double_scalar_fixed_point_mult(kH, gamma, &H, nonce, truncatedHash);
 #ifdef DEBUG
   printf("----- U=k*B -----\n");
   by_print(kB);
