@@ -114,7 +114,11 @@ static void fe_sqrt_and_legendre(fe sqrt, fe e, const fe w){
   for (i = 1; i < 10; ++i) {
       fe_sq(l2, l2);
   }
+<<<<<<< ours
 
+=======
+    
+>>>>>>> theirs
   /* l2 = l2 * l1 = w ** (2 ** 20 - 2 ** 10 + 2 ** 10 - 1) = w ** (2 ** 20 - 1) */
   fe_mul(l2, l2, l1);
 
@@ -130,7 +134,11 @@ static void fe_sqrt_and_legendre(fe sqrt, fe e, const fe w){
   for (i = 0; i < 10; ++i) {
       fe_sq(l2, l2);
   }
+<<<<<<< ours
 
+=======
+    
+>>>>>>> theirs
   /* l1 = l2 * l1 = w ** (2 ** 50 - 2 ** 10 + 2 ** 10 - 1) = w ** (2 ** 50 - 1) */
   fe_mul(l1, l2, l1);
 
