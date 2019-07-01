@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <time.h>
 #include "../lib/ecvrf.h"
 
 //#define DEBUG
@@ -100,6 +101,34 @@ static void fe_cswap(fe f, fe g, unsigned int b)
     }
 }
 
+/*
+  merging two tobytes inversions using the multiplication trick
+  uint8_t[32] out1 <-- p
+  uint8_t[32] out2 <-- q
+  cost: 1S
+*/
+static void ge_p3_merge_two_tobytes(by out1, by out2, ge_p3 *p, ge_p3 *q)
+{
+  fe recip;
+  fe x;
+  fe y;
+
+  fe_mul(recip, p->Z, q->Z);
+  fe_invert(recip, recip);
+
+  fe_mul(x, recip, q->Z);
+  fe_mul(y, p->Y, x);
+  fe_mul(x, p->X, x);
+  fe_tobytes(out1, y);
+  out1[31] ^= fe_isnegative(x) << 7;
+
+  fe_mul(x, recip, p->Z);
+  fe_mul(y, q->Y, x);
+  fe_mul(x, q->X, x);
+  fe_tobytes(out2, y);
+  out2[31] ^= fe_isnegative(x) << 7;
+}
+
 static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe out_z3[32],
                                        const uint8_t scalar[32], const uint8_t in_x[32])
 {
@@ -162,97 +191,81 @@ static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe ou
 //tobytes adds 2 more inversions to the total
 static void montgomery_ladder_to_edwards(uint8_t out[32],
                                        const uint8_t scalar[32],
-                                       const uint8_t in_x[32], const ge_p3 *in_P) {
-    fe x2, z2, x3, z3;
-    montgomery_ladder(x2, z2, x3, z3, scalar, in_x);
-    by x2_by, x3_by, x3n_by;
-    fe x2_ed, x3_ed, x3n_ed;
-    fe temp;
-    fe t0, t1;
-    fe_add(t0, x2, z2);
-    fe_add(t1, x3, z3);
-    fe_mul(temp, t0, t1);
-    fe_invert(temp, temp);
-
-    fe_mul(t1, temp, t1);
-    fe_sub(x2_ed, x2, z2);
-    fe_mul(x2_ed, t1, x2_ed);
-
-    fe_mul(t0, temp, t0);
-    fe_sub(x3_ed, x3, z3);
-    fe_mul(x3_ed, t0, x3_ed);
-
-    fe_tobytes(x2_by, x2_ed);
-
-    ge_p3 x2_p3, x3n_p3;
-    ge_p1p1 x3n_p1;
-    ge_frombytes_vartime(&x2_p3, x2_by);
-
-    ge_cached p_ca;
-    ge_p3_to_cached(&p_ca, in_P);
-
-    ge_add(&x3n_p1, &x2_p3, &p_ca);
-    ge_p1p1_to_p3(&x3n_p3, &x3n_p1);
-    ge_p3_tobytes(x3n_by, &x3n_p3);
-    fe_frombytes(x3n_ed, x3n_by);
-
-    fe f;
-    fe_sub(f, x3_ed, x3n_ed);
-    // eq = 0   when x3_ed - x3n_ed   = 0
-    // eq = 1   when x3_ed - x3n_ed  != 0
-    unsigned eq = fe_isnonzero(f);
-    memcpy(out, x2_by, 32);
-    out[31] ^= eq<<7;
-
-}
-
-
-static void double_add_scalar_mult(uint8_t out[32],
-                                        const uint8_t scalar[32],
-                                        const uint8_t point[32])
+                                       const uint8_t in_x[32], const ge_p3 *in_P)
 {
-    ge_cached pc;
-    ge_p3 pp3;
-    ge_p1p1 pp1p1;
-    ge_frombytes_vartime(&pp3, point);
-    ge_p3_to_cached(&pc, &pp3);
-    ge_p3 pout;
-    for(int i=31;i>=0;i--){
-      for(int j=7;j>=0;j--){
-        if(i==31 && j==7)
-          continue;
-        ge_p3_dbl(&pp1p1, &pp3);
-        ge_p1p1_to_p3(&pp3, &pp1p1);
-        if((scalar[i]>>j) & 1 == 1){
-          printf("1");
-          fe_copy(pout.X, pp3.X);
-          fe_copy(pout.Y, pp3.Y);
-          fe_copy(pout.Z, pp3.Z);
-          fe_copy(pout.T, pp3.T);
-          ge_add(&pp1p1, &pp3, &pc);
-          ge_p1p1_to_p3(&pp3, &pp1p1);
-        }
-        printf("0");
-      }
-    }
-    printf("\n");
-    ge_p3_tobytes(out, &pout);
+
+  fe x2, z2, x3, z3;
+  montgomery_ladder(x2, z2, x3, z3, scalar, in_x);
+  by x2_by, x3_by, x3n_by;
+  fe x2_ed, x3_ed, x3n_ed;
+  fe temp;
+  fe t0, t1;
+  fe_add(t0, x2, z2);
+  fe_add(t1, x3, z3);
+  fe_mul(temp, t0, t1);
+  fe_invert(temp, temp);
+
+  fe_mul(t1, temp, t1);
+  fe_sub(x2_ed, x2, z2);
+  fe_mul(x2_ed, t1, x2_ed);
+
+  fe_mul(t0, temp, t0);
+  fe_sub(x3_ed, x3, z3);
+  fe_mul(x3_ed, t0, x3_ed);
+
+  fe_tobytes(x2_by, x2_ed);
+
+  ge_p3 x2_p3, x3n_p3;
+  ge_p1p1 x3n_p1;
+  ge_frombytes_vartime(&x2_p3, x2_by);
+
+  ge_cached p_ca;
+  ge_p3_to_cached(&p_ca, in_P);
+
+  ge_add(&x3n_p1, &x2_p3, &p_ca);
+  ge_p1p1_to_p3(&x3n_p3, &x3n_p1);
+  ge_p3_tobytes(x3n_by, &x3n_p3);
+  fe_frombytes(x3n_ed, x3n_by);
+
+  fe f;
+  fe_sub(f, x3_ed, x3n_ed);
+  // eq = 0   when x3_ed - x3n_ed   = 0
+  // eq = 1   when x3_ed - x3n_ed  != 0
+  unsigned eq = fe_isnonzero(f);
+  memcpy(out, x2_by, 32);
+  out[31] ^= eq<<7;
+
 }
 
-
-static void fast_add(ge_p3 *out, ge_p3 *in, ge_p2 *h)
+/*
+  dedicated / dual Edwards addition
+  r = p + q
+  (X3:Y3:Z3:T3) = (X1:Y1:Z1:T1) + (X2:Y2:Z2:T2)
+  cost: 8M
+*/
+static void ge_dedicated_add(ge_p3 *r, ge_p3 *p, ge_p3 *q)
 {
-  fe A,B,C,D,E,F,G,H;
-  fe_sub(A, in->Y, in->X);
-  fe_add(B, h->Y, h->X);
-  fe_mul(A, A, B);
-  fe_add(B, in->Y, in->X);
-  fe_sub(C, h->Y, h->X);
-  fe_mul(B, B, C);
-  fe_add(C, in->Z, in->Z);
-  //fe_mul(C, C, h->T)
-}
+  fe A, B, C, D, E, F, G, H;
 
+  fe_sub(A, p->Y, p->X);      // A = (Y1 - X1)
+  fe_add(B, q->Y, q->X);      // B = (Y2 + X2)
+  fe_mul(A, A, B);            // A = (Y1 - X1) * (Y2 + X2)
+  fe_add(B, p->Y, p->X);      // B = (Y1 + X1)
+  fe_sub(C, q->Y, q->X);      // C = (Y2 - X2)
+  fe_mul(B, B, C);            // B = (Y1 + X1) * (Y2 - X2)
+  fe_add(C, p->Z, p->Z);      // C = 2 Z1
+  fe_mul(C, C, q->T);         // C = 2 Z1 * T2
+  fe_add(D, p->T, p->T);      // D = 2 T1
+  fe_mul(D, D, q->Z);         // D = 2 T1 * Z2
+  fe_add(E, D, C);            // E = D + C
+  fe_sub(F, B, A);            // F = B - A
+  fe_add(G, B, A);            // G = B + A
+  fe_sub(H, D, C);            // H = D - C
+  fe_mul(r->X, E, F);         // X3 = E * F
+  fe_mul(r->Y, G, H);         // Y3 = G * H
+  fe_mul(r->T, E, H);         // T3 = E * H
+  fe_mul(r->Z, F, G);         // Z3 = F * G
+}
 
 static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
                                               const uint8_t scalar1[32], const uint8_t scalar2[32])
@@ -275,25 +288,38 @@ static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], g
     unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
     unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
 
+    /*
     ge_p3_to_cached(&tca, &P);
     ge_add(&tp1, &sum[b1 + 2*b2], &tca);
     ge_p1p1_to_p3(&sum[b1 + 2*b2], &tp1);
+    */
+
+    ge_dedicated_add(&sum[b1 + 2*b2], &sum[b1 + 2*b2], &P);
+
     ge_p3_dbl(&tp1, &P);
     ge_p1p1_to_p3(&P, &tp1);
 
   }
 
+  /*
   ge_p3_to_cached(&tca, &sum[3]);
   ge_add(&tp1, &sum[1], &tca);
   ge_p1p1_to_p3(&sum[1], &tp1);
   ge_add(&tp1, &sum[2], &tca);
   ge_p1p1_to_p3(&sum[2], &tp1);
+  */
 
-  ge_p3_tobytes(out1, &sum[1]);
-  ge_p3_tobytes(out2, &sum[2]);
+  ge_dedicated_add(&sum[1], &sum[1], &sum[3]);
+  ge_dedicated_add(&sum[2], &sum[2], &sum[3]);
+
+  /*
+    ge_p3_tobytes(out1, &sum[1]);
+    ge_p3_tobytes(out2, &sum[2]);
+  */
+  ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
 }
 
-static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
+static void ECVRF_prove(double *t, uint8_t* pi, const uint8_t* SK,
                     const uint8_t* alpha, const uint8_t alpha_len)
 {
 #ifdef DEBUG
@@ -337,7 +363,7 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   //3.  h_string = point_to_string(H)
   ge_p3 H;
   by H_string, mUb;
-  elligator2_ed25519(&H, H_string, mUb, alpha, alpha_len, y);
+  elligator2_ed25519_fast(&H, H_string, mUb, alpha, alpha_len, y);
   //by H_string;
   //ge_p3_tobytes(H_string, &H);
 
@@ -370,12 +396,16 @@ static void ECVRF_prove(uint8_t* pi, const uint8_t* SK,
   ge_scalarmult_base(&p3, nonce);
   ge_p3_tobytes(kB, &p3);
 
+  *t = (double)clock();
 
   //montgomery_ladder_to_edwards(kH, nonce, mUb, &H);
 
   by gamma;
   //montgomery_ladder_to_edwards(gamma, truncatedHash, mUb, &H);
   double_scalar_fixed_point_mult(kH, gamma, &H, nonce, truncatedHash);
+
+  *t = (double)clock()-(*t);
+
 #ifdef DEBUG
   printf("----- U=k*B -----\n");
   by_print(kB);

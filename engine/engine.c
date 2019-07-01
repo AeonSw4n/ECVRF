@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <openssl/engine.h>
 #include "../lib/engine.h"
 #include "../lib/env.h"
@@ -14,6 +15,8 @@ static const char *engine_id = "ecvrf";
 static const char *engine_name = "OpenSSL engine implementing ECVRF!";
 
 int ecvrf_init(ENGINE *e){
+  double t, t_total, t_average;
+  t_average = 0.0;
 
 #ifndef TESTER
   uint8_t pi[80];
@@ -29,82 +32,91 @@ int ecvrf_init(ENGINE *e){
     sscanf(b, "%2x", &xc32);
     alpha[i] = (uint8_t)(xc32&255);
   }
-  ECVRF_prove(pi, x, alpha, alpha_len);
-  for(int i=0; i<80; i++)
-    printf("%2x", pi[i]);
+  ECVRF_prove(&t, pi, x, alpha, alpha_len);
+  //for(int i=0; i<80; i++)
+  //  printf("%2x", pi[i]);
 #endif
 
-#ifdef TESTER
-  FILE *fp;
-  fp = fopen(PROVE_TESTS, "r");
-  if (fp == NULL)
-  {
-     perror("Error while opening the file.\n");
-     exit(EXIT_FAILURE);
-  }
-  int counter = 0;
-  int passed = 0;
-  uint8_t line[256];
-  while(fgets(line, 256, fp) != NULL && counter < 10000){
-    by SK;
-    by_fromstr(SK, line);
 
-    fgets(line, 256, fp);
-    uint32_t len;
-    sscanf(line, "%d %s", &len, line);
-
-    uint8_t i;
-    for(i=0; i<len;i++){
-      const char b[2] = {line[2*i], line[2*i+1]};
-      uint32_t xc32;
-      sscanf(b, "%2x", &xc32);
-      line[i] = (uint8_t)(xc32&255);
-    }
-    uint8_t pi[80];
-    ECVRF_prove(pi, SK, line, len);
-
-    fgets(line, 256, fp);
-    for(i=0; i<80;i++){
-      const char b[2] = {line[2*i], line[2*i+1]};
-      uint32_t xc32;
-      sscanf(b, "%2x", &xc32);
-      line[i] = (uint8_t)(xc32&255);
-    }
-    uint8_t A = 1;
-    for(i=0; i<80; i++){
-      if(line[i] != pi[i]){
-        A = 0;
-        break;
+  for(int rep=0; rep<1; rep++){
+    t_total = 0.0;
+    #ifdef TESTER
+      FILE *fp;
+      fp = fopen(PROVE_TESTS, "r");
+      if (fp == NULL)
+      {
+         perror("Error while opening the file.\n");
+         exit(EXIT_FAILURE);
       }
-    }
+      int counter = 0;
+      int passed = 0;
+      uint8_t line[256];
+      while(fgets(line, 256, fp) != NULL && counter < 10000){
+        by SK;
+        by_fromstr(SK, line);
 
-    if(A == 1)
-      passed++;
+        fgets(line, 256, fp);
+        uint32_t len;
+        sscanf(line, "%d %s", &len, line);
 
-#ifdef DEBUG
-    if(A == 0){
-      printf("--------------------\n");
-      printf("ERROR ON TEST: %d\n", counter);
-      printf("RECEIVED: ");
-      for(i=0; i<80; i++)
-        printf("%2x", pi[i]);
-      printf("\n");
-      printf("EXPECTED: ");
-      for(i=0; i<80; i++)
-        printf("%2x", line[i]);
-      printf("\n");
-      printf("--------------------\n");
-    }
-    else{
-      printf("---TEST %d PASSED---\n", counter);
-    }
-#endif
+        uint8_t i;
+        for(i=0; i<len;i++){
+          const char b[2] = {line[2*i], line[2*i+1]};
+          uint32_t xc32;
+          sscanf(b, "%2x", &xc32);
+          line[i] = (uint8_t)(xc32&255);
+        }
+        uint8_t pi[80];
 
-    fgets(line, 256, fp);
-    counter++;
+        ECVRF_prove(&t, pi, SK, line, len);
+        t_total += t;
+
+        fgets(line, 256, fp);
+        for(i=0; i<80;i++){
+          const char b[2] = {line[2*i], line[2*i+1]};
+          uint32_t xc32;
+          sscanf(b, "%2x", &xc32);
+          line[i] = (uint8_t)(xc32&255);
+        }
+        uint8_t A = 1;
+        for(i=0; i<80; i++){
+          if(line[i] != pi[i]){
+            A = 0;
+            break;
+          }
+        }
+
+        if(A == 1)
+          passed++;
+
+      #ifdef DEBUG
+        if(A == 0){
+          printf("--------------------\n");
+          printf("ERROR ON TEST: %d\n", counter);
+          printf("RECEIVED: ");
+          for(i=0; i<80; i++)
+            printf("%2x", pi[i]);
+          printf("\n");
+          printf("EXPECTED: ");
+          for(i=0; i<80; i++)
+            printf("%2x", line[i]);
+          printf("\n");
+          printf("--------------------\n");
+        }
+        else{
+          printf("---TEST %d PASSED---\n", counter);
+        }
+      #endif
+
+        fgets(line, 256, fp);
+        counter++;
+      }
+      printf("\n\n Passed/Counter: %d/%d\n", passed, counter);
+    #endif
+    t_average = ((double)rep*t_average + t_total)/((double)rep + 1.0);
   }
-  printf("\n\n Passed/Counter: %d/%d\n", passed, counter);
-#endif
+  double cpu_time_used = t_average/(double)CLOCKS_PER_SEC;
+  printf("time %f seconds\n", cpu_time_used);
   return 1;
 
  end:
