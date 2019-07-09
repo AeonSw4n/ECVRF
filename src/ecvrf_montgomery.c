@@ -1,65 +1,5 @@
-#include "../lib/elligator2.h"
-
-//#define DEBUG
-
-/**
- * Returns, via parameter out, the field element equal to the
- * the coefficient A = 486662 in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
- */
-static void elligator_fe_A(fe out)
+static void fe_sqrt_and_legendre(fe sqrt, fe e, const fe w)
 {
-    out[0] = 486662;
-    out[1] = 0;
-    out[2] = 0;
-    out[3] = 0;
-    out[4] = 0;
-    out[5] = 0;
-    out[6] = 0;
-    out[7] = 0;
-    out[8] = 0;
-    out[9] = 0;
-
-}
-
-/**
- * Returns, via parameter out, a field element equal to the
- * square root of A + 2 (= 486664), where A  = 48662 is the value from
- * the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
- * // TODO: describe which square root -- positive or negative? And what is positive and what is negative?
- */
-static void fe_sqrt_A_plus_2(fe out)
-{
-  out[0] = 8930344;
-  out[1] = 9583591;
-  out[2] = -26444492;
-  out[3] = 3752533;
-  out[4] = 26044487;
-  out[5] = -743697;
-  out[6] = -2900628;
-  out[7] = 5634116;
-  out[8] = 25139868;
-  out[9] = -5270574;
-}
-
-/**
- * Returns, via parameter out, a field element equal to the 2^{2^{252}-2} mod p (where p = 2^{255}-19)
- * // TODO: confirm
- */
-static void fe_u252m2(fe out)
-{
-  out[0] = -32595791;
-  out[1] = -7943725;
-  out[2] = 9377950;
-  out[3] = 3500415;
-  out[4] = 12389472;
-  out[5] = -272473;
-  out[6] = -25146209;
-  out[7] = -2005654;
-  out[8] = 326686;
-  out[9] = 11406482;
-}
-
-static void fe_sqrt_and_legendre(fe sqrt, fe e, const fe w){
   fe w_squared;
   fe l0;
   fe l1;
@@ -114,11 +54,7 @@ static void fe_sqrt_and_legendre(fe sqrt, fe e, const fe w){
   for (i = 1; i < 10; ++i) {
       fe_sq(l2, l2);
   }
-<<<<<<< HEAD
 
-=======
-    
->>>>>>> 8b03c528d41b2a4a0862b60b3a589bb473939a31
   /* l2 = l2 * l1 = w ** (2 ** 20 - 2 ** 10 + 2 ** 10 - 1) = w ** (2 ** 20 - 1) */
   fe_mul(l2, l2, l1);
 
@@ -134,11 +70,7 @@ static void fe_sqrt_and_legendre(fe sqrt, fe e, const fe w){
   for (i = 0; i < 10; ++i) {
       fe_sq(l2, l2);
   }
-<<<<<<< HEAD
 
-=======
-    
->>>>>>> 8b03c528d41b2a4a0862b60b3a589bb473939a31
   /* l1 = l2 * l1 = w ** (2 ** 50 - 2 ** 10 + 2 ** 10 - 1) = w ** (2 ** 50 - 1) */
   fe_mul(l1, l2, l1);
 
@@ -182,38 +114,6 @@ static void fe_sqrt_and_legendre(fe sqrt, fe e, const fe w){
   fe_mul(e, l1, l0);
 }
 
-
-static unsigned int fe_parity(const fe h){
-  int32_t h0 = h[0];
-  int32_t h1 = h[1];
-  int32_t h2 = h[2];
-  int32_t h3 = h[3];
-  int32_t h4 = h[4];
-  int32_t h5 = h[5];
-  int32_t h6 = h[6];
-  int32_t h7 = h[7];
-  int32_t h8 = h[8];
-  int32_t h9 = h[9];
-  int32_t q;
-
-  q = (19 * h9 + (((int32_t) 1) << 24)) >> 25;
-  q = (h0 + q) >> 26;
-  q = (h1 + q) >> 25;
-  q = (h2 + q) >> 26;
-  q = (h3 + q) >> 25;
-  q = (h4 + q) >> 26;
-  q = (h5 + q) >> 25;
-  q = (h6 + q) >> 26;
-  q = (h7 + q) >> 25;
-  q = (h8 + q) >> 26;
-  q = (h9 + q) >> 25;
-
-  /* Goal: Output h-(2^255-19)q, which is between 0 and 2^255-20. */
-  h0 += 19 * q;
-  h0 &= kBottom26Bits;
-  return (unsigned int) ((uint8_t)(h0) & 1);
-}
-
 static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_point_mont, const uint8_t *data,
                   size_t size, by public_key)
 {
@@ -244,7 +144,7 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
     fe r;
     fe_frombytes(r, truncatedHash);
 
-#ifdef DEBUG
+  #ifdef DEBUG
     printf("----- r -----\n");
     by rby;
     fe_tobytes(rby, r);
@@ -276,7 +176,7 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
 
     // Square root of A
     fe sqA;
-    fe_fe_sqrt_A_plus_2(sqA);
+    fe_sqrt_A_plus_2(sqA);
 
     // u is x-Montgomery
     fe u0, u1, uf;
@@ -360,12 +260,7 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
     fe_mul(sqA, sqA, uf);         // sqA       = uf * A^(1/2)
 
     // absolute value of (X/Z)
-/*  fe_invert(t0, sqr);
-    fe_mul(t0, t0, sqA);
-    fe_neg(t1, sqr);
-    b = fe_parity(t0);
-    fe_cmov(sqr, t1, b);
-*/
+
     fe_copy(p1p1.X, sqA);         // X         = sqA
     fe_copy(p1p1.Z, sqr);         // Z         = sqr
 
@@ -416,4 +311,251 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
     fe_tobytes(out_point_mont, minvert);
 
 
+}
+
+static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe out_z3[32],
+                                       const uint8_t scalar[32], const uint8_t in_x[32])
+{
+    fe x1, x2, z2, x3, z3, tmp0, tmp1;
+    uint8_t e[32];
+    unsigned swap = 0;
+    int pos;
+
+    memcpy(e, scalar, 32);
+    //e[0] &= 248;
+    //e[31] &= 127;
+    //e[31] |= 64;
+    fe_frombytes(x1, in_x);
+    fe_1(x2);
+    fe_0(z2);
+    fe_copy(x3, x1);
+    fe_1(z3);
+
+    for (pos = 254; pos >= 0; --pos) {
+        unsigned b = 1 & (e[pos / 8] >> (pos & 7));
+        //printf("%d", b);
+        swap ^= b;
+        fe_cswap(x2, x3, swap);
+        fe_cswap(z2, z3, swap);
+        swap = b;
+        fe_sub(tmp0, x3, z3);
+        fe_sub(tmp1, x2, z2);
+        fe_add(x2, x2, z2);
+        fe_add(z2, x3, z3);
+        fe_mul(z3, tmp0, x2);
+        fe_mul(z2, z2, tmp1);
+        fe_sq(tmp0, tmp1);
+        fe_sq(tmp1, x2);
+        fe_add(x3, z3, z2);
+        fe_sub(z2, z3, z2);
+        fe_mul(x2, tmp1, tmp0);
+        fe_sub(tmp1, tmp1, tmp0);
+        fe_sq(z2, z2);
+        fe_mul121666(z3, tmp1);
+        fe_sq(x3, x3);
+        fe_add(tmp0, tmp0, z3);
+        fe_mul(z3, x1, z2);
+        fe_mul(z2, tmp1, tmp0);
+    }
+    fe_cswap(x2, x3, swap);
+    fe_cswap(z2, z3, swap);
+
+    fe_copy(out_x2, x2);
+    fe_copy(out_z2, z2);
+    fe_copy(out_x3, x3);
+    fe_copy(out_z3, z3);
+
+    OPENSSL_cleanse(e, sizeof(e));
+}
+
+//can't find any way to combine square rooting
+//inversion and square root can be combined by (x^8 y)^(2^252-3)*x^3 for sqr, and then finding y^(2^255-2^252-17)=y^(7*2^252-17)=(y^(2^252-3)^7)*y^4 for the inv
+//can save one inversion combining two ladders
+//with inversion optimization, total added cost is 3 exponentiations, with inv/sqr total is 2
+//tobytes adds 2 more inversions to the total
+static void montgomery_ladder_to_edwards(uint8_t out[32],
+                                       const uint8_t scalar[32],
+                                       const uint8_t in_x[32], const ge_p3 *in_P)
+{
+
+  fe x2, z2, x3, z3;
+  montgomery_ladder(x2, z2, x3, z3, scalar, in_x);
+  by x2_by, x3_by, x3n_by;
+  fe x2_ed, x3_ed, x3n_ed;
+  fe temp;
+  fe t0, t1;
+  fe_add(t0, x2, z2);
+  fe_add(t1, x3, z3);
+  fe_mul(temp, t0, t1);
+  fe_invert(temp, temp);
+
+  fe_mul(t1, temp, t1);
+  fe_sub(x2_ed, x2, z2);
+  fe_mul(x2_ed, t1, x2_ed);
+
+  fe_mul(t0, temp, t0);
+  fe_sub(x3_ed, x3, z3);
+  fe_mul(x3_ed, t0, x3_ed);
+
+  fe_tobytes(x2_by, x2_ed);
+
+  ge_p3 x2_p3, x3n_p3;
+  ge_p1p1 x3n_p1;
+  ge_frombytes_vartime(&x2_p3, x2_by);
+
+  ge_cached p_ca;
+  ge_p3_to_cached(&p_ca, in_P);
+
+  ge_add(&x3n_p1, &x2_p3, &p_ca);
+  ge_p1p1_to_p3(&x3n_p3, &x3n_p1);
+  ge_p3_tobytes(x3n_by, &x3n_p3);
+  fe_frombytes(x3n_ed, x3n_by);
+
+  fe f;
+  fe_sub(f, x3_ed, x3n_ed);
+  // eq = 0   when x3_ed - x3n_ed   = 0
+  // eq = 1   when x3_ed - x3n_ed  != 0
+  unsigned eq = fe_isnonzero(f);
+  memcpy(out, x2_by, 32);
+  out[31] ^= eq<<7;
+
+}
+
+static void ECVRF_prove_montgomery(double *t, uint8_t* pi, const uint8_t* SK,
+                    const uint8_t* alpha, const uint8_t alpha_len)
+{
+ #ifdef DEBUG
+  printf("----- SK -----\n");
+  by_print(SK);
+  printf("\n");
+ #endif
+
+  //1.  Use SK to derive the VRF secret scalar x and the VRF public key Y = x*B
+  uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
+  SHA512_CTX hash_ctx;
+  SHA512_Init(&hash_ctx);
+  SHA512_Update(&hash_ctx, SK, 32);
+  SHA512_Final(hash, &hash_ctx);
+
+  by truncatedHash;
+  memcpy(truncatedHash, hash, 32);
+
+  truncatedHash[0]  &= 0xF8;
+  truncatedHash[31] &= 0x7F;
+  truncatedHash[31] |= 0x40;
+
+ #ifdef DEBUG
+  printf("----- x -----\n");
+  by_print(truncatedHash);
+  printf("\n");
+ #endif
+
+  ge_p3 p3;
+  by y;
+  ge_scalarmult_base(&p3, truncatedHash);
+  ge_p3_tobytes(y, &p3);
+
+ #ifdef DEBUG
+  printf("----- PK -----\n");
+  by_print(y);
+  printf("\n");
+ #endif
+
+  //2.  H = ECVRF_hash_to_curve(suite_string, Y, alpha_string)
+  //3.  h_string = point_to_string(H)
+  ge_p3 H;
+  by H_string, mUb;
+  elligator2_ed25519(&H, H_string, mUb, alpha, alpha_len, y);
+  //by H_string;
+  //ge_p3_tobytes(H_string, &H);
+
+ #ifdef DEBUG
+  printf("----- H -----\n");
+  by_print(H_string);
+  printf("\n");
+ #endif
+
+  //4.  gamma = x*H
+  //by gamma;
+  //x25519_scalar_mult(gamma, truncatedHash, H);
+
+  //5.  k = nonce = ECVRF_nonce_generation(SK, h_string)
+  by kB, kH;
+  uint8_t nonce[SHA512_DIGEST_LENGTH] = {0};
+  SHA512_CTX nonce_ctx;
+  SHA512_Init(&nonce_ctx);
+  SHA512_Update(&nonce_ctx, hash + 32, 32);
+  SHA512_Update(&nonce_ctx, H_string, 32);
+  SHA512_Final(nonce, &nonce_ctx);
+
+ #ifdef DEBUG
+  printf("----- k -----\n");
+  by_print(nonce);
+  printf("\n");
+ #endif
+
+  x25519_sc_reduce(nonce);
+  ge_scalarmult_base(&p3, nonce);
+  ge_p3_tobytes(kB, &p3);
+
+  *t = (double)clock();
+
+  montgomery_ladder_to_edwards(kH, nonce, mUb, &H);
+
+  by gamma;
+  montgomery_ladder_to_edwards(gamma, truncatedHash, mUb, &H);
+  //double_scalar_fixed_point_mult(kH, gamma, &H, nonce, truncatedHash);
+
+  *t = (double)clock()-(*t);
+
+ #ifdef DEBUG
+  printf("----- U=k*B -----\n");
+  by_print(kB);
+  printf("\n");
+  printf("----- V=k*H -----\n");
+  by_print(kH);
+  printf("\n");
+ #endif
+
+
+  //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
+  static const uint8_t SUITE  = 0x04;
+  static const uint8_t TWO    = 0x02;
+  uint8_t c_string[SHA512_DIGEST_LENGTH] = {0};
+  SHA512_CTX c_ctx;
+  SHA512_Init(&c_ctx);
+  SHA512_Update(&c_ctx, &SUITE, 1);
+  SHA512_Update(&c_ctx, &TWO, 1);
+  SHA512_Update(&c_ctx, H_string, 32);
+  SHA512_Update(&c_ctx, gamma, 32);
+  SHA512_Update(&c_ctx, kB, 32);
+  SHA512_Update(&c_ctx, kH, 32);
+  SHA512_Final(c_string, &c_ctx);
+
+  uint8_t c[32];
+  memset(c, 0, 32);
+  memcpy(c, c_string, 16);
+
+  //7.  s = (k + c*x) mod q
+  uint8_t s[32];
+  sc_muladd(s, truncatedHash, c, nonce);
+
+  //8.  pi_string = point_to_string(Gamma) || int_to_string(c, n) || int_to_string(s, qLen)
+  //9.  Output pi_string
+  memcpy(pi, gamma, 32);
+  memcpy(pi+32, c, 16);
+  memcpy(pi+48, s, 32);
+
+ #ifdef DEBUG
+  printf("----- pi -----\n");
+  for(int i=0; i<32; i++)
+    printf("%x ", pi[i]);
+  printf("|| ");
+  for(int i=32; i<48; i++)
+    printf("%x ", pi[i]);
+  printf("|| ");
+  for(int i=48; i<80; i++)
+    printf("%x ", pi[i]);
+  printf("\n");
+ #endif
 }

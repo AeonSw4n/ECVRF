@@ -6,7 +6,7 @@
 #include "../lib/env.h"
 
 //#define DEBUG
-#define TESTER
+//#define TESTER
 
 #define ELLIGATOR2_TESTS ROOT "/tests/tests_elligator2.txt"
 #define PROVE_TESTS ROOT "/tests/tests_prove.txt"
@@ -14,18 +14,19 @@
 static const char *engine_id = "ecvrf";
 static const char *engine_name = "OpenSSL engine implementing ECVRF!";
 
-int ecvrf_init(ENGINE *e){
+int ecvrf_init(ENGINE *e)
+{
   double t, t_total, t_average;
   t_average = 0.0;
 
-#ifndef TESTER
+ #ifndef TESTER
   uint8_t pi[80];
-  const uint8_t x_raw[64] = "00014843542f26b56396604025893cd454f8958c0c2245e91e1bca38327931f9";
+  const uint8_t x_raw[64] = "2b7794e737d0dffc7221360462617b256ddbec98018a2781152786f1560c4310";
   by x;
   by_fromstr(x, x_raw);
-  uint32_t alpha_len = 24;
-  const uint8_t alpha_raw[48] = "85f9abc06a7f657655f9a4ed58e31dbccb1731aa2601dd69";
-  uint8_t alpha[24];
+  uint32_t alpha_len = 26;
+  const uint8_t alpha_raw[52] = "919687cfd226964cc3dc54aa62ea5793f17b567bd28c6a7f8c52";
+  uint8_t alpha[26];
   for(uint8_t i=0; i<alpha_len;i++){
     const char b[2] = {alpha_raw[2*i], alpha_raw[2*i+1]};
     uint32_t xc32;
@@ -33,9 +34,28 @@ int ecvrf_init(ENGINE *e){
     alpha[i] = (uint8_t)(xc32&255);
   }
   ECVRF_prove(&t, pi, x, alpha, alpha_len);
-  //for(int i=0; i<80; i++)
-  //  printf("%2x", pi[i]);
-#endif
+  for(int i=0; i<80; i++){
+    if(pi[i] < 16)
+      printf("0%1x", pi[i]);
+    else
+      printf("%2x", pi[i]);
+  }
+  printf("\n\n");
+  uint8_t beta[64];
+  ECVRF_proof_to_hash(beta, pi);
+  for(int i=0;i<64;i++){
+    if(beta[i] < 16)
+      printf("0%1x", beta[i]);
+    else
+      printf("%2x", beta[i]);
+  }
+  printf("\n");
+  const uint8_t y_raw[64] = "d2c358b9b7937168ab115c6281272eed43d8a40cbaf77f3b09e72a815eae29a2";
+  by y;
+  by_fromstr(y, y_raw);
+  int eq = ECVRF_verify(y, pi, alpha, alpha_len);
+  printf("ECVRF_verify returns: %d\n", eq);
+ #endif
 
 
   for(int rep=0; rep<1; rep++){

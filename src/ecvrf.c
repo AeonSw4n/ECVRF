@@ -30,6 +30,14 @@
 
 */
 
+static void int_cmov(int *t0, int t1, unsigned int b)
+{
+  b = 0-b;
+  int x = (*t0) ^ t1;
+  x &= b;
+  *t0 = (*t0)^x;
+}
+
 static void fe_mul121666(fe h, fe f)
 {
     int32_t f0 = f[0];
@@ -87,7 +95,6 @@ static void fe_mul121666(fe h, fe f)
     h[9] = (int32_t)h9;
 }
 
-
 static void fe_cswap(fe f, fe g, unsigned int b)
 {
     size_t i;
@@ -99,6 +106,60 @@ static void fe_cswap(fe f, fe g, unsigned int b)
         f[i] ^= x;
         g[i] ^= x;
     }
+}
+
+static void ge_p3_copy(ge_p3 *r, ge_p3 *p)
+{
+  fe_copy(r->X, p->X);
+  fe_copy(r->Y, p->Y);
+  fe_copy(r->Z, p->Z);
+  fe_copy(r->T, p->T);
+}
+
+static void ge_p3_cmov(ge_p3 *p, ge_p3 *q, unsigned int b)
+{
+  fe_cmov(p->X, q->X, b);
+  fe_cmov(p->Y, q->Y, b);
+  fe_cmov(p->Z, q->Z, b);
+  fe_cmov(p->T, q->T, b);
+}
+
+static void ge_p3_cswap(ge_p3 *p, ge_p3 *q, unsigned int b)
+{
+  fe_cswap(p->X, q->X, b);
+  fe_cswap(p->Y, q->Y, b);
+  fe_cswap(p->Z, q->Z, b);
+  fe_cswap(p->T, q->T, b);
+}
+
+/*
+  dedicated / dual Edwards addition
+  r = p + q
+  (X3:Y3:Z3:T3) = (X1:Y1:Z1:T1) + (X2:Y2:Z2:T2)
+  cost: 8M
+*/
+static void ge_dedicated_add(ge_p3 *r, ge_p3 *p, ge_p3 *q)
+{
+  fe A, B, C, D, E, F, G, H;
+
+  fe_sub(A, p->Y, p->X);      // A = (Y1 - X1)
+  fe_add(B, q->Y, q->X);      // B = (Y2 + X2)
+  fe_mul(A, A, B);            // A = (Y1 - X1) * (Y2 + X2)
+  fe_add(B, p->Y, p->X);      // B = (Y1 + X1)
+  fe_sub(C, q->Y, q->X);      // C = (Y2 - X2)
+  fe_mul(B, B, C);            // B = (Y1 + X1) * (Y2 - X2)
+  fe_add(C, p->Z, p->Z);      // C = 2 Z1
+  fe_mul(C, C, q->T);         // C = 2 Z1 * T2
+  fe_add(D, p->T, p->T);      // D = 2 T1
+  fe_mul(D, D, q->Z);         // D = 2 T1 * Z2
+  fe_add(E, D, C);            // E = D + C
+  fe_sub(F, B, A);            // F = B - A
+  fe_add(G, B, A);            // G = B + A
+  fe_sub(H, D, C);            // H = D - C
+  fe_mul(r->X, E, F);         // X3 = E * F
+  fe_mul(r->Y, G, H);         // Y3 = G * H
+  fe_mul(r->T, E, H);         // T3 = E * H
+  fe_mul(r->Z, F, G);         // Z3 = F * G
 }
 
 /*
@@ -127,6 +188,123 @@ static void ge_p3_merge_two_tobytes(by out1, by out2, ge_p3 *p, ge_p3 *q)
   fe_mul(x, q->X, x);
   fe_tobytes(out2, y);
   out2[31] ^= fe_isnegative(x) << 7;
+}
+
+static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
+                                              const uint8_t scalar1[32], const uint8_t scalar2[32])
+{
+  ge_p3 sum[4];
+  ge_p1p1 tp1;
+  ge_cached tca;
+
+  int pos;
+  for(pos = 0; pos < 4; pos++)
+    ge_p3_0(&sum[pos]);
+
+  ge_p3 P;
+  ge_p3_copy(&P, H);
+
+  unsigned int swap1 = 0;
+  unsigned int swap2 = 0;
+
+  for(pos = 0; pos < 255; ++pos){
+    unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
+    unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
+
+    ge_p3_cswap(&sum[0], &sum[3], (b1 && b2) ^ (swap1 && swap2));
+    ge_p3_cswap(&sum[1], &sum[2], swap2 ^ b2);
+    swap1 = b1 ^ b2;
+    ge_dedicated_add(&sum[swap1], &sum[swap1], &P);
+    swap1 = b1;
+    swap2 = b2;
+
+    ge_p3_dbl(&tp1, &P);
+    ge_p1p1_to_p3(&P, &tp1);
+
+
+  }
+  ge_p3_cswap(&sum[1], &sum[2], swap1 && swap2);
+  ge_p3_cswap(&sum[1], &sum[2], swap2);
+
+  ge_dedicated_add(&sum[1], &sum[1], &sum[3]);
+  ge_dedicated_add(&sum[2], &sum[2], &sum[3]);
+
+  ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
+}
+
+static void double_scalar_fixed_point_mult_secure(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
+                                              const uint8_t scalar1[32], const uint8_t scalar2[32])
+{
+  ge_p3 sum[4];
+  ge_p1p1 tp1;
+  ge_cached tca;
+
+  int pos;
+  for(pos = 0; pos < 4; pos++)
+    ge_p3_0(&sum[pos]);
+
+  ge_p3 P;
+  ge_p3_copy(&P, H);
+
+  unsigned int swap1 = 0;
+
+  for(pos = 0; pos < 255; ++pos){
+    unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
+    unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
+
+    swap1 ^= b1;
+    ge_p3_cswap(&sum[2], &sum[3], swap1);
+    ge_p3_cswap(&sum[1], &sum[2], b2);
+    ge_p3_cswap(&sum[0], &sum[1], b1 || b2);
+    swap1 = b1;
+
+    ge_dedicated_add(&sum[0], &sum[0], &P);
+
+    ge_p3_cswap(&sum[0], &sum[1], b1 || b2);
+    ge_p3_cswap(&sum[1], &sum[2], b2);
+
+    ge_p3_dbl(&tp1, &P);
+    ge_p1p1_to_p3(&P, &tp1);
+
+
+  }
+
+  ge_dedicated_add(&sum[1], &sum[1], &sum[3]);
+  ge_dedicated_add(&sum[2], &sum[2], &sum[3]);
+
+  ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
+}
+
+static void double_scalar_fixed_point_mult_plain(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
+                                              const uint8_t scalar1[32], const uint8_t scalar2[32])
+{
+  ge_p3 sum[4];
+  ge_p1p1 tp1;
+  ge_cached tca;
+
+  int pos;
+  for(pos = 0; pos < 4; pos++)
+    ge_p3_0(&sum[pos]);
+
+  ge_p3 P;
+  ge_p3_copy(&P, H);
+
+
+  for(pos = 0; pos < 255; ++pos){
+    unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
+    unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
+
+    ge_dedicated_add(&sum[b1+2*b2], &sum[b1+2*b2], &P);
+
+    ge_p3_dbl(&tp1, &P);
+    ge_p1p1_to_p3(&P, &tp1);
+
+  }
+
+  ge_dedicated_add(&sum[1], &sum[1], &sum[3]);
+  ge_dedicated_add(&sum[2], &sum[2], &sum[3]);
+
+  ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
 }
 
 static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe out_z3[32],
@@ -189,7 +367,7 @@ static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe ou
 //can save one inversion combining two ladders
 //with inversion optimization, total added cost is 3 exponentiations, with inv/sqr total is 2
 //tobytes adds 2 more inversions to the total
-static void montgomery_ladder_to_edwards(uint8_t out[32],
+static void montgomery_ladder_to_edwards(ge_p3 *out,
                                        const uint8_t scalar[32],
                                        const uint8_t in_x[32], const ge_p3 *in_P)
 {
@@ -232,101 +410,222 @@ static void montgomery_ladder_to_edwards(uint8_t out[32],
   // eq = 0   when x3_ed - x3n_ed   = 0
   // eq = 1   when x3_ed - x3n_ed  != 0
   unsigned eq = fe_isnonzero(f);
-  memcpy(out, x2_by, 32);
-  out[31] ^= eq<<7;
-
-}
-
-/*
-  dedicated / dual Edwards addition
-  r = p + q
-  (X3:Y3:Z3:T3) = (X1:Y1:Z1:T1) + (X2:Y2:Z2:T2)
-  cost: 8M
-*/
-static void ge_dedicated_add(ge_p3 *r, ge_p3 *p, ge_p3 *q)
-{
-  fe A, B, C, D, E, F, G, H;
-
-  fe_sub(A, p->Y, p->X);      // A = (Y1 - X1)
-  fe_add(B, q->Y, q->X);      // B = (Y2 + X2)
-  fe_mul(A, A, B);            // A = (Y1 - X1) * (Y2 + X2)
-  fe_add(B, p->Y, p->X);      // B = (Y1 + X1)
-  fe_sub(C, q->Y, q->X);      // C = (Y2 - X2)
-  fe_mul(B, B, C);            // B = (Y1 + X1) * (Y2 - X2)
-  fe_add(C, p->Z, p->Z);      // C = 2 Z1
-  fe_mul(C, C, q->T);         // C = 2 Z1 * T2
-  fe_add(D, p->T, p->T);      // D = 2 T1
-  fe_mul(D, D, q->Z);         // D = 2 T1 * Z2
-  fe_add(E, D, C);            // E = D + C
-  fe_sub(F, B, A);            // F = B - A
-  fe_add(G, B, A);            // G = B + A
-  fe_sub(H, D, C);            // H = D - C
-  fe_mul(r->X, E, F);         // X3 = E * F
-  fe_mul(r->Y, G, H);         // Y3 = G * H
-  fe_mul(r->T, E, H);         // T3 = E * H
-  fe_mul(r->Z, F, G);         // Z3 = F * G
-}
-
-static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
-                                              const uint8_t scalar1[32], const uint8_t scalar2[32])
-{
-  ge_p3 sum[4];
-  ge_p1p1 tp1;
-  ge_cached tca;
-
-  int pos;
-  for(pos = 0; pos < 4; pos++)
-    ge_p3_0(&sum[pos]);
-
-  ge_p3 P;
-  fe_copy(P.X, H->X);
-  fe_copy(P.Y, H->Y);
-  fe_copy(P.Z, H->Z);
-  fe_copy(P.T, H->T);
-
-  for(pos = 0; pos < 255; ++pos){
-    unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
-    unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
-
-    /*
-    ge_p3_to_cached(&tca, &P);
-    ge_add(&tp1, &sum[b1 + 2*b2], &tca);
-    ge_p1p1_to_p3(&sum[b1 + 2*b2], &tp1);
-    */
-
-    ge_dedicated_add(&sum[b1 + 2*b2], &sum[b1 + 2*b2], &P);
-
-    ge_p3_dbl(&tp1, &P);
-    ge_p1p1_to_p3(&P, &tp1);
-
+  if(eq == 1){
+    fe_neg(x2_p3.X, x2_p3.X);
+    fe_neg(x2_p3.T, x2_p3.T);
   }
+  ge_p3_copy(out, &x2_p3);
 
+}
+
+static int ge_p3_frombytes(ge_p3 *h, const uint8_t *s)
+{
+    fe u;
+    fe v;
+    fe v3;
+    fe vxx;
+    fe check;
+
+    fe_frombytes(h->Y, s);
+    fe_1(h->Z);
+    fe_sq(u, h->Y);
+    fe_mul(v, u, d);
+    fe_sub(u, u, h->Z); /* u = y^2-1 */
+    fe_add(v, v, h->Z); /* v = dy^2+1 */
+
+    fe_sq(v3, v);
+    fe_mul(v3, v3, v); /* v3 = v^3 */
+    fe_sq(h->X, v3);
+    fe_mul(h->X, h->X, v);
+    fe_mul(h->X, h->X, u); /* x = uv^7 */
+
+    fe_pow22523(h->X, h->X); /* x = (uv^7)^((q-5)/8) */
+    fe_mul(h->X, h->X, v3);
+    fe_mul(h->X, h->X, u); /* x = uv^3(uv^7)^((q-5)/8) */
+
+    fe_sq(vxx, h->X);
+    fe_mul(vxx, vxx, v);
+    fe_sub(check, vxx, u); /* vx^2-u */
+
+    unsigned int b;
+    fe status, correct, error;
+    fe_1(status);
+    fe_1(correct);
+    fe_neg(error, status);
+
+    b = fe_isnonzero(check);
+
+    fe check2;
+    fe_add(check2, vxx, u);
+    fe hX;
+    fe_mul(hX, h->X, sqrtm1);
+
+    fe_cmov(correct, error, b);
+    fe_cmov(check, check2, b);
+    fe_cmov(h->X, hX, b);
+
+
+    b = fe_isnonzero(check);
+    fe_cmov(status, correct, b);
+
+    b = fe_isnegative(h->X) != (s[31] >> 7);
+    fe_neg(hX, h->X);
+    fe_cmov(h->X, hX, b);
+
+    fe_mul(h->T, h->X, h->Y);
+    return fe_isnegative(status);
+}
+
+static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_t* pi)
+{
   /*
-  ge_p3_to_cached(&tca, &sum[3]);
-  ge_add(&tp1, &sum[1], &tca);
-  ge_p1p1_to_p3(&sum[1], &tp1);
-  ge_add(&tp1, &sum[2], &tca);
-  ge_p1p1_to_p3(&sum[2], &tp1);
+
+
+    2.  let c_string = pi_string[ptLen]...pi_string[ptLen+n-1]
+
+    3.  let s_string =pi_string[ptLen+n]...pi_string[ptLen+n+qLen-1]
+
+    4.  Gamma = string_to_point(gamma_string)
+
+    5.  if Gamma = "INVALID" output "INVALID" and stop.
+
+    6.  c = string_to_int(c_string)
+
+    7.  s = string_to_int(s_string)
+
+    8.  Output Gamma, c, and s
   */
 
-  ge_dedicated_add(&sum[1], &sum[1], &sum[3]);
-  ge_dedicated_add(&sum[2], &sum[2], &sum[3]);
+  // 1.  let gamma_string = pi_string[0]...p_string[ptLen-1]
+  uint8_t gamma_string[32];
+  memcpy(gamma_string, pi, 32);
 
+  int status = ge_p3_frombytes(Gamma, gamma_string);
+
+  memset(c, 0, 32);
+
+  memcpy(c, pi+32, 16);
+  memcpy(s, pi+48, 32);
+
+  return status;
+
+}
+
+
+static int ECVRF_proof_to_hash(uint8_t *beta, const uint8_t *pi)
+{
   /*
-    ge_p3_tobytes(out1, &sum[1]);
-    ge_p3_tobytes(out2, &sum[2]);
+    1.  D = ECVRF_decode_proof(pi_string)
+
+    2.  If D is "INVALID", output "INVALID" and stop
+
+    3.  (Gamma, c, s) = D
+
+    4.  three_string = 0x03 = int_to_string(3, 1), a single octet with
+       value 3
+
+    5.  beta_string = Hash(suite_string || three_string ||
+       point_to_string(cofactor * Gamma))
+
+    6.  Output beta_string
   */
-  ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
+
+
+  static const uint8_t SUITE  = 0x04;
+  static const uint8_t THREE  = 0x03;
+
+  uint8_t gamma_cofactor[32];
+  uint8_t c[32], s[32];
+  ge_p3 gamma_p3;
+  ge_p2 gamma_p2;
+  ge_p1p1 gamma_p1p1;
+  int status = ECVRF_decode_proof(&gamma_p3, c, s, pi);
+
+  ge_p3_to_p2(&gamma_p2, &gamma_p3);
+
+  ge_p2_dbl(&gamma_p1p1, &gamma_p2);
+  ge_p1p1_to_p2(&gamma_p2, &gamma_p1p1);
+  ge_p2_dbl(&gamma_p1p1, &gamma_p2);
+  ge_p1p1_to_p2(&gamma_p2, &gamma_p1p1);
+  ge_p2_dbl(&gamma_p1p1, &gamma_p2);
+  ge_p1p1_to_p2(&gamma_p2, &gamma_p1p1);
+
+  ge_tobytes(gamma_cofactor, &gamma_p2);
+
+  uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
+  SHA512_CTX hash_ctx;
+  SHA512_Init(&hash_ctx);
+  SHA512_Update(&hash_ctx, &SUITE, 1);
+  SHA512_Update(&hash_ctx, &THREE, 1);
+  SHA512_Update(&hash_ctx, gamma_cofactor, 32);
+  SHA512_Final(hash, &hash_ctx);
+
+  memcpy(beta, hash, 64);
+
+  return status;
+}
+
+static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
+{
+  /*
+    1.  D = ECVRF_decode_proof(pi_string)
+
+    2.  If D is "INVALID", output "INVALID" and stop
+
+    3.  (Gamma, c, s) = D
+
+    4.  three_string = 0x03 = int_to_string(3, 1), a single octet with
+       value 3
+
+    5.  beta_string = Hash(suite_string || three_string ||
+       point_to_string(cofactor * Gamma))
+
+    6.  Output beta_string
+  */
+
+  uint8_t gamma[32], c[16], s[32];
+
+  memcpy(gamma, pi, 32);
+  memcpy(c, pi+32, 16);
+  memcpy(s, pi+48, 32);
+
+  static const uint8_t SUITE  = 0x04;
+  static const uint8_t THREE  = 0x03;
+
+  uint8_t gamma_cofactor[32];
+  ge_p3 gamma_p3;
+  ge_p2 gamma_p2;
+  ge_p1p1 gamma_p1p1;
+  if(ge_frombytes_vartime(&gamma_p3, gamma) == -1)
+    return -1;
+
+
+  ge_p3_to_p2(&gamma_p2, &gamma_p3);
+
+  ge_p2_dbl(&gamma_p1p1, &gamma_p2);
+  ge_p1p1_to_p2(&gamma_p2, &gamma_p1p1);
+  ge_p2_dbl(&gamma_p1p1, &gamma_p2);
+  ge_p1p1_to_p2(&gamma_p2, &gamma_p1p1);
+  ge_p2_dbl(&gamma_p1p1, &gamma_p2);
+  ge_p1p1_to_p2(&gamma_p2, &gamma_p1p1);
+
+  ge_tobytes(gamma_cofactor, &gamma_p2);
+
+  uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
+  SHA512_CTX hash_ctx;
+  SHA512_Init(&hash_ctx);
+  SHA512_Update(&hash_ctx, &SUITE, 1);
+  SHA512_Update(&hash_ctx, &THREE, 1);
+  SHA512_Update(&hash_ctx, gamma_cofactor, 32);
+  SHA512_Final(hash, &hash_ctx);
+
+  memcpy(beta, hash, 64);
+  return 1;
 }
 
 static void ECVRF_prove(double *t, uint8_t* pi, const uint8_t* SK,
-                    const uint8_t* alpha, const uint8_t alpha_len)
+                    const uint8_t* alpha, const size_t alpha_len)
 {
-#ifdef DEBUG
-  printf("----- SK -----\n");
-  by_print(SK);
-  printf("\n");
-#endif
 
   //1.  Use SK to derive the VRF secret scalar x and the VRF public key Y = x*B
   uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
@@ -342,40 +641,21 @@ static void ECVRF_prove(double *t, uint8_t* pi, const uint8_t* SK,
   truncatedHash[31] &= 0x7F;
   truncatedHash[31] |= 0x40;
 
-#ifdef DEBUG
-  printf("----- x -----\n");
-  by_print(truncatedHash);
-  printf("\n");
-#endif
-
   ge_p3 p3;
   by y;
   ge_scalarmult_base(&p3, truncatedHash);
   ge_p3_tobytes(y, &p3);
 
-#ifdef DEBUG
-  printf("----- PK -----\n");
-  by_print(y);
-  printf("\n");
-#endif
 
   //2.  H = ECVRF_hash_to_curve(suite_string, Y, alpha_string)
   //3.  h_string = point_to_string(H)
   ge_p3 H;
-  by H_string, mUb;
-  elligator2_ed25519_fast(&H, H_string, mUb, alpha, alpha_len, y);
-  //by H_string;
-  //ge_p3_tobytes(H_string, &H);
+  by H_string;
+  by mUb;
+  elligator2_ed25519_fast(&H, H_string, alpha, alpha_len, y);
 
-#ifdef DEBUG
-  printf("----- H -----\n");
-  by_print(H_string);
-  printf("\n");
-#endif
 
   //4.  gamma = x*H
-  //by gamma;
-  //x25519_scalar_mult(gamma, truncatedHash, H);
 
   //5.  k = nonce = ECVRF_nonce_generation(SK, h_string)
   by kB, kH;
@@ -386,37 +666,20 @@ static void ECVRF_prove(double *t, uint8_t* pi, const uint8_t* SK,
   SHA512_Update(&nonce_ctx, H_string, 32);
   SHA512_Final(nonce, &nonce_ctx);
 
-#ifdef DEBUG
-  printf("----- k -----\n");
-  by_print(nonce);
-  printf("\n");
-#endif
 
   x25519_sc_reduce(nonce);
   ge_scalarmult_base(&p3, nonce);
   ge_p3_tobytes(kB, &p3);
 
-  *t = (double)clock();
-
-  //montgomery_ladder_to_edwards(kH, nonce, mUb, &H);
-
   by gamma;
-  //montgomery_ladder_to_edwards(gamma, truncatedHash, mUb, &H);
+  *t = (double)clock();
   double_scalar_fixed_point_mult(kH, gamma, &H, nonce, truncatedHash);
-
   *t = (double)clock()-(*t);
-
-#ifdef DEBUG
-  printf("----- U=k*B -----\n");
+  //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
   by_print(kB);
   printf("\n");
-  printf("----- V=k*H -----\n");
   by_print(kH);
   printf("\n");
-#endif
-
-
-  //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
   static const uint8_t SUITE  = 0x04;
   static const uint8_t TWO    = 0x02;
   uint8_t c_string[SHA512_DIGEST_LENGTH] = {0};
@@ -444,59 +707,111 @@ static void ECVRF_prove(double *t, uint8_t* pi, const uint8_t* SK,
   memcpy(pi+32, c, 16);
   memcpy(pi+48, s, 32);
 
-#ifdef DEBUG
-  printf("----- pi -----\n");
-  for(int i=0; i<32; i++)
-    printf("%x ", pi[i]);
-  printf("|| ");
-  for(int i=32; i<48; i++)
-    printf("%x ", pi[i]);
-  printf("|| ");
-  for(int i=48; i<80; i++)
-    printf("%x ", pi[i]);
+}
+
+static int ECVRF_verify(const uint8_t *y, const uint8_t *pi,
+                  const uint8_t *alpha, const size_t alpha_len)
+{
+  /*
+    1.  D = ECVRF_decode_proof(pi_string)
+
+    2.  If D is "INVALID", output "INVALID" and stop
+
+    3.  (Gamma, c, s) = D
+
+    4.  H = ECVRF_hash_to_curve(suite_string, Y, alpha_string)
+
+    5.  U = s*B - c*Y
+
+    6.  V = s*H - c*Gamma
+
+    7.  c' = ECVRF_hash_points(H, Gamma, U, V)
+
+    8.  If c and c' are equal, output ("VALID",
+        ECVRF_proof_to_hash(pi_string)); else output "INVALID"
+  */
+  uint8_t c[32], s[32];
+  ge_p3 G;
+  int status = ECVRF_decode_proof(&G, c, s, pi);
+
+  ge_p3 H;
+  by H_string;
+  elligator2_ed25519_fast(&H, H_string, alpha, alpha_len, y);
+  ge_p2 U;
+  ge_p3 Y;
+  ge_frombytes_vartime(&Y, y);
+  fe_neg(Y.X, Y.X);
+  fe_neg(Y.T, Y.T);
+  ge_double_scalarmult_vartime(&U, c, &Y, s);
+  //fe_neg(U.X, U.X);
+
+  ge_p3 s_H, c_G;
+  fe mGx, mHx;
+  fe t0, t1;
+  fe_sub(mGx, G.Z, G.Y);
+  fe_sub(mHx, H.Z, H.Y);
+  fe_mul(t0, mHx, mGx);
+  fe_invert(t0, t0);
+  fe_add(t1, G.Z, G.Y);
+  fe_mul(t1, t1, t0);
+  fe_mul(t1, t1, mHx);  // u of G
+  by Gby;
+  fe_tobytes(Gby, t1);
+  montgomery_ladder_to_edwards(&c_G, c, Gby, &G);
+  fe_add(t1, H.Z, H.Y);
+  fe_mul(t1, t1, t0);
+  fe_mul(t1, t1, mGx);  // u of H
+  by Hby;
+  fe_tobytes(Hby, t1);
+  montgomery_ladder_to_edwards(&s_H, s, Hby, &H);
+  by s_Hby;
+  ge_p3_tobytes(s_Hby, &s_H);
+  //by_print(s);
+
+  //by_print(s_Hby);
+  //printf("\n");
+  ge_cached c_G_cached;
+  ge_p1p1 V_p1p1;
+  ge_p2 V;
+  ge_p3_to_cached(&c_G_cached, &c_G);
+  ge_sub(&V_p1p1, &s_H, &c_G_cached);
+  ge_p1p1_to_p2(&V, &V_p1p1);
+  by Uby, Vby;
+  ge_tobytes(Uby, &U);
+  ge_tobytes(Vby, &V);
+
+
+  //c' = ECVRF_hash_points(H, Gamma, U, V)
+  //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
+  static const uint8_t SUITE  = 0x04;
+  static const uint8_t TWO    = 0x02;
+  uint8_t cp_string[SHA512_DIGEST_LENGTH] = {0};
+  SHA512_CTX cp_ctx;
   printf("\n");
-#endif
-}
+  by_print(Uby);
+  printf("\n");
+  by_print(Vby);
+  SHA512_Init(&cp_ctx);
+  SHA512_Update(&cp_ctx, &SUITE, 1);
+  SHA512_Update(&cp_ctx, &TWO, 1);
+  SHA512_Update(&cp_ctx, H_string, 32);
+  SHA512_Update(&cp_ctx, pi, 32);
+  SHA512_Update(&cp_ctx, Uby, 32);
+  SHA512_Update(&cp_ctx, Vby, 32);
+  SHA512_Final(cp_string, &cp_ctx);
 
-static void ECVRF_proof2hash(uint8_t* beta, const uint8_t* pi)
-{
-  /*
-    1.  D = ECVRF_decode_proof(pi)
+  uint8_t cp[32];
+  memset(cp, 0, 32);
+  memcpy(cp, cp_string, 16);
 
-    2.  If D is "INVALID", output "INVALID" and stop
+  int eq = 1;
+  int i;
+  for(i=0; i<32; i++){
+    if(c[i] != cp[i]){
+      eq = 0;
+      break;
+    }
+  }
 
-    3.  (gamma, c, s) = D
-
-    4.  three = 0x03 = I2OSP(3, 1), a single octet with value 3
-
-    5.  preBeta = Hash(suite || three || EC2OSP(gamma^cofactor))
-
-    6.  beta = first 2n octets of preBeta
-
-    7.  Output beta
-  */
-}
-
-static uint8_t ECVRF_verify(const by y, const uint8_t* pi,
-                  const uint8_t* alpha)
-{
-  /*
-    1.  D = ECVRF_decode_proof(pi)
-
-    2.  If D is "INVALID", output "INVALID" and stop
-
-    3.  (gamma, c, s) = D
-
-    4.  u = g^s / y^c (where / denotes EC point subtraction, i.e. the
-       group operation applied to g^s and the inverse of y^c)
-
-    5.  h = ECVRF_hash_to_curve(suite, y, alpha)
-
-    6.  v = h^s / gamma^c (where / again denotes EC point subtraction)
-
-    7.  c' = ECVRF_hash_points(h, gamma, u, v)
-
-    8.  If c and c' are equal, output "VALID"; else output "INVALID"
-  */
-  return 0;
+  return eq;
 }

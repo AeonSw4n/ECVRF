@@ -3,10 +3,10 @@
 //#define DEBUG
 
 /**
- * Returns, via parameter out, the field element equal to the
- * the coefficient A = 486662 in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
+ * Returns, via parameter out, a field element equal to
+ * A, where A = 48662 is the coefficient in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
  */
-static void elligator_fe_A(fe out)
+static void fe_A(fe out)
 {
     out[0] = 486662;
     out[1] = 0;
@@ -21,7 +21,11 @@ static void elligator_fe_A(fe out)
 
 }
 
-static void elligator_fe_A3(fe out)
+/**
+ * Returns, via parameter out, a field element equal to
+ * A^3, where A = 48662 is the coefficient in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
+ */
+static void fe_A3(fe out)
 {
   out[0] = -8127272;
   out[1] = 6246418;
@@ -37,8 +41,8 @@ static void elligator_fe_A3(fe out)
 
 /**
  * Returns, via parameter out, a field element equal to the
- * square root of A + 2 (= 486664), where A  = 48662 is the value from
- * the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
+ * square root of A + 2 (= 486664), i.e. (A + 2)^{2^{252}-2} mod p (where p = 2^{255}-19)
+ * A = 48662 is the value from the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
  * // TODO: describe which square root -- positive or negative? And what is positive and what is negative?
  */
 static void fe_sqrt_A_plus_2(fe out)
@@ -56,10 +60,11 @@ static void fe_sqrt_A_plus_2(fe out)
 }
 
 /**
- * Returns, via parameter out, a field element equal to the 2^{2^{252}-2} mod p (where p = 2^{255}-19)
+ * Returns, via parameter out, a field element equal to the
+ * square root of 2, i.e. 2^{2^{252}-2} mod p (where p = 2^{255}-19)
  * // TODO: confirm
  */
-static void fe_u252m2(fe out)
+static void fe_sqrt_2(fe out)
 {
   out[0] = -32595791;
   out[1] = -7943725;
@@ -73,7 +78,154 @@ static void fe_u252m2(fe out)
   out[9] = 11406482;
 }
 
-static void fe_sqrt_and_legendre(fe sqrt, fe e, const fe w){
+static unsigned int fe_parity(const fe h)
+{
+  int32_t h0 = h[0];
+  int32_t h1 = h[1];
+  int32_t h2 = h[2];
+  int32_t h3 = h[3];
+  int32_t h4 = h[4];
+  int32_t h5 = h[5];
+  int32_t h6 = h[6];
+  int32_t h7 = h[7];
+  int32_t h8 = h[8];
+  int32_t h9 = h[9];
+  int32_t q;
+
+  q = (19 * h9 + (((int32_t) 1) << 24)) >> 25;
+  q = (h0 + q) >> 26;
+  q = (h1 + q) >> 25;
+  q = (h2 + q) >> 26;
+  q = (h3 + q) >> 25;
+  q = (h4 + q) >> 26;
+  q = (h5 + q) >> 25;
+  q = (h6 + q) >> 26;
+  q = (h7 + q) >> 25;
+  q = (h8 + q) >> 26;
+  q = (h9 + q) >> 25;
+
+  /* Goal: Output h-(2^255-19)q, which is between 0 and 2^255-20. */
+  h0 += 19 * q;
+  h0 &= kBottom26Bits;
+  return (unsigned int) ((uint8_t)(h0) & 1);
+}
+
+/*
+ * Compute the Legendre symbol e of w as
+ * w ** ((p-1)/2) = w ** (2 ** 254 - 10) with the exponent as
+ * 2 ** 254 - 10 = (2 ** 4) * (2 ** 250 - 1) + 6.
+ * We will do so using 253 squarings and 11 multiplications.
+ * In the process, also compute w ** (p+3)/8 = (2 ** 252 - 2),
+ * which costs us one extra multiplication.
+ */
+static void fe_fraction_sqrt_and_legendre(fe sqrt, fe e, const fe w)
+{
+  fe w_squared;
+  fe l0;
+  fe l1;
+  fe l2;
+  fe l3;
+  int i;
+
+  /* ww = w ** 2 */
+  fe_sq(w_squared, w);
+
+  /* l0 = w ** 2 */
+  fe_copy(l0, w_squared);
+
+  /* l3 = l0 * w = w ** 3 */
+  fe_mul(l3, l0, w);
+
+  /* l0 = l3 ** 2 = w ** 6 -- stash l0 away for the end. */
+  fe_sq(l0, l3);
+
+  /* l1 = l0 * w = w ** 7 */
+  fe_mul(l1, l0, w);
+
+  /* l2 = l1 ** 2 = w ** 14 */
+  fe_sq(l2, l1);
+
+  /* l2 = l2 ** 2 = w ** 28 */
+  fe_sq(l2, l2);
+
+  /* l1 = l3 * l2 = w ** 31 =  w ** (2 ** 5 - 1) */
+  fe_mul(l1, l3, l2);
+
+  /* l2 = l1 ** (2 ** 5) = w ** ((2 ** 5) * (2 ** 5 - 1)) = w ** (2 ** 10 - 2 ** 5)*/
+  fe_sq(l2, l1);
+  for (i = 1; i < 5; ++i) {
+      fe_sq(l2, l2);
+  }
+
+  /* l1 = l2 * l1 = w ** (2 ** 10 - 2 ** 5 + 2 ** 5 - 1) = w ** (2 ** 10 - 1) */
+  fe_mul(l1, l2, l1);
+
+  /* l2 = l1 ** (2 ** 10) = w ** ((2 ** 10) * (2 ** 10 - 1)) = w ** (2 ** 20 - 2 ** 10) */
+  fe_sq(l2, l1);
+  for (i = 1; i < 10; ++i) {
+      fe_sq(l2, l2);
+  }
+
+  /* l2 = l2 * l1 = w ** (2 ** 20 - 2 ** 10 + 2 ** 10 - 1) = w ** (2 ** 20 - 1) */
+  fe_mul(l2, l2, l1);
+
+  /* l3 = l2 ** (2 ** 20) = w ** (2 ** 40 - 2 ** 20)) */
+  fe_sq(l3, l2);
+  for (i = 1; i < 20; ++i) {
+      fe_sq(l3, l3);
+  }
+  /* l2 = l3 * l2 = w ** (2 ** 40 - 2 ** 20 + 2 ** 20 - 1) = w ** (2 ** 40 - 1) */
+  fe_mul(l2, l3, l2);
+
+  /* l2 = l2 ** (2 ** 10) = w ** ((2 ** 10) * (2 ** 40 - 1)) = w ** (2 ** 50 - 2 ** 10) */
+  for (i = 0; i < 10; ++i) {
+      fe_sq(l2, l2);
+  }
+
+  /* l1 = l2 * l1 = w ** (2 ** 50 - 2 ** 10 + 2 ** 10 - 1) = w ** (2 ** 50 - 1) */
+  fe_mul(l1, l2, l1);
+
+  /* l2 = l1 ** (2 ** 50) = w ** (2 ** 100 - 2 ** 50) */
+  fe_sq(l2, l1);
+  for (i = 1; i < 50; ++i) {
+      fe_sq(l2, l2);
+  }
+  /* l2 = l2 ** l1 = w ** (2 ** 100 - 2 ** 50 + 2 ** 50 - 1)) = w ** (2 ** 100 - 1) */
+  fe_mul(l2, l2, l1);
+
+  /* l3 = l2 ** (2 ** 100) = w ** (2 ** 200 - 2 ** 100) */
+  fe_sq(l3, l2);
+  for (i = 1; i < 100; ++i) {
+      fe_sq(l3, l3);
+  }
+  /* l2 = l3 * l2 = w ** (2 ** 200 - 2 ** 100 + 2 ** 100 - 1) = w ** (2 ** 200 - 1) */
+  fe_mul(l2, l3, l2);
+
+  /* l2 = l2 ** (2 ** 50) = w ** ((2 ** 50) * (2 ** 200 - 1) = w ** (2 ** 250 - 2 ** 50) */
+  fe_sq(l2, l2);
+  for (i = 1; i < 50; ++i) {
+      fe_sq(l2, l2);
+  }
+
+  /* l1 = l2 * l1 = w ** (2 ** 250 - 2 ** 50 + 2 ** 50 - 1) = w ** (2 ** 250 - 1) */
+  fe_mul(l1, l2, l1);
+
+  /* l1 = l1 ** 4 = w ** (2 ** 252 - 4) */
+  fe_sq(l1, l1);
+  fe_sq(l1, l1);
+
+  fe_copy(sqrt, l1);
+
+  /* l1 = l1 ** 4 = w ** (2 ** 254 - 16) */
+  fe_sq(l1, l1);
+  fe_sq(l1, l1);
+
+  /* Recall l0 = w ** 6; out = w ** (2 ** 254 - 10) */
+  fe_mul(e, l1, l0);
+}
+
+static void fe_sqrt_and_legendre(fe sqrt, fe e, const fe w)
+{
   fe w_squared;
   fe l0;
   fe l1;
@@ -188,155 +340,7 @@ static void fe_sqrt_and_legendre(fe sqrt, fe e, const fe w){
   fe_mul(e, l1, l0);
 }
 
-static void fe_sqrt_and_legendre2(fe sqrt, fe e, const fe w){
-  fe w_squared;
-  fe l0;
-  fe l1;
-  fe l2;
-  fe l3;
-  int i;
-
-  /*
-   * Compute the Legendre symbol e of w as
-   * w ** ((p-1)/2) = w ** (2 ** 254 - 10) with the exponent as
-   * 2 ** 254 - 10 = (2 ** 4) * (2 ** 250 - 1) + 6.
-   * We will do so using 253 squarings and 11 multiplications.
-   * In the process, also compute w ** (p+3)/8 = (2 ** 252 - 2),
-   * which costs us one extra multiplication.
-   */
-
-  /* ww = w ** 2 */
-  fe_sq(w_squared, w);
-
-  /* l0 = w ** 2 */
-  fe_copy(l0, w_squared);
-
-  /* l3 = l0 * w = w ** 3 */
-  fe_mul(l3, l0, w);
-
-  /* l0 = l3 ** 2 = w ** 6 -- stash l0 away for the end. */
-  fe_sq(l0, l3);
-
-  /* l1 = l0 * w = w ** 7 */
-  fe_mul(l1, l0, w);
-
-  /* l2 = l1 ** 2 = w ** 14 */
-  fe_sq(l2, l1);
-
-  /* l2 = l2 ** 2 = w ** 28 */
-  fe_sq(l2, l2);
-
-  /* l1 = l3 * l2 = w ** 31 =  w ** (2 ** 5 - 1) */
-  fe_mul(l1, l3, l2);
-
-  /* l2 = l1 ** (2 ** 5) = w ** ((2 ** 5) * (2 ** 5 - 1)) = w ** (2 ** 10 - 2 ** 5)*/
-  fe_sq(l2, l1);
-  for (i = 1; i < 5; ++i) {
-      fe_sq(l2, l2);
-  }
-
-  /* l1 = l2 * l1 = w ** (2 ** 10 - 2 ** 5 + 2 ** 5 - 1) = w ** (2 ** 10 - 1) */
-  fe_mul(l1, l2, l1);
-
-  /* l2 = l1 ** (2 ** 10) = w ** ((2 ** 10) * (2 ** 10 - 1)) = w ** (2 ** 20 - 2 ** 10) */
-  fe_sq(l2, l1);
-  for (i = 1; i < 10; ++i) {
-      fe_sq(l2, l2);
-  }
-
-  /* l2 = l2 * l1 = w ** (2 ** 20 - 2 ** 10 + 2 ** 10 - 1) = w ** (2 ** 20 - 1) */
-  fe_mul(l2, l2, l1);
-
-  /* l3 = l2 ** (2 ** 20) = w ** (2 ** 40 - 2 ** 20)) */
-  fe_sq(l3, l2);
-  for (i = 1; i < 20; ++i) {
-      fe_sq(l3, l3);
-  }
-  /* l2 = l3 * l2 = w ** (2 ** 40 - 2 ** 20 + 2 ** 20 - 1) = w ** (2 ** 40 - 1) */
-  fe_mul(l2, l3, l2);
-
-  /* l2 = l2 ** (2 ** 10) = w ** ((2 ** 10) * (2 ** 40 - 1)) = w ** (2 ** 50 - 2 ** 10) */
-  for (i = 0; i < 10; ++i) {
-      fe_sq(l2, l2);
-  }
-
-  /* l1 = l2 * l1 = w ** (2 ** 50 - 2 ** 10 + 2 ** 10 - 1) = w ** (2 ** 50 - 1) */
-  fe_mul(l1, l2, l1);
-
-  /* l2 = l1 ** (2 ** 50) = w ** (2 ** 100 - 2 ** 50) */
-  fe_sq(l2, l1);
-  for (i = 1; i < 50; ++i) {
-      fe_sq(l2, l2);
-  }
-  /* l2 = l2 ** l1 = w ** (2 ** 100 - 2 ** 50 + 2 ** 50 - 1)) = w ** (2 ** 100 - 1) */
-  fe_mul(l2, l2, l1);
-
-  /* l3 = l2 ** (2 ** 100) = w ** (2 ** 200 - 2 ** 100) */
-  fe_sq(l3, l2);
-  for (i = 1; i < 100; ++i) {
-      fe_sq(l3, l3);
-  }
-  /* l2 = l3 * l2 = w ** (2 ** 200 - 2 ** 100 + 2 ** 100 - 1) = w ** (2 ** 200 - 1) */
-  fe_mul(l2, l3, l2);
-
-  /* l2 = l2 ** (2 ** 50) = w ** ((2 ** 50) * (2 ** 200 - 1) = w ** (2 ** 250 - 2 ** 50) */
-  fe_sq(l2, l2);
-  for (i = 1; i < 50; ++i) {
-      fe_sq(l2, l2);
-  }
-
-  /* l1 = l2 * l1 = w ** (2 ** 250 - 2 ** 50 + 2 ** 50 - 1) = w ** (2 ** 250 - 1) */
-  fe_mul(l1, l2, l1);
-
-  /* l1 = l1 ** 4 = w ** (2 ** 252 - 4) */
-  fe_sq(l1, l1);
-  fe_sq(l1, l1);
-
-  fe_copy(sqrt, l1);
-  /* sqrt = l1 * w_squared = w ** (2 ** 252 - 4 + 2) = w ** (2 ** 252 - 2)*/
-  //fe_mul(sqrt, l1, w_squared);
-
-  /* l1 = l1 ** 4 = w ** (2 ** 254 - 16) */
-  fe_sq(l1, l1);
-  fe_sq(l1, l1);
-
-  /* Recall l0 = w ** 6; out = w ** (2 ** 254 - 10) */
-  fe_mul(e, l1, l0);
-}
-
-
-static unsigned int fe_parity(const fe h){
-  int32_t h0 = h[0];
-  int32_t h1 = h[1];
-  int32_t h2 = h[2];
-  int32_t h3 = h[3];
-  int32_t h4 = h[4];
-  int32_t h5 = h[5];
-  int32_t h6 = h[6];
-  int32_t h7 = h[7];
-  int32_t h8 = h[8];
-  int32_t h9 = h[9];
-  int32_t q;
-
-  q = (19 * h9 + (((int32_t) 1) << 24)) >> 25;
-  q = (h0 + q) >> 26;
-  q = (h1 + q) >> 25;
-  q = (h2 + q) >> 26;
-  q = (h3 + q) >> 25;
-  q = (h4 + q) >> 26;
-  q = (h5 + q) >> 25;
-  q = (h6 + q) >> 26;
-  q = (h7 + q) >> 25;
-  q = (h8 + q) >> 26;
-  q = (h9 + q) >> 25;
-
-  /* Goal: Output h-(2^255-19)q, which is between 0 and 2^255-20. */
-  h0 += 19 * q;
-  h0 &= kBottom26Bits;
-  return (unsigned int) ((uint8_t)(h0) & 1);
-}
-
-static void elligator2_ed25519_fast(ge_p3 *out_point, by out_point_bytes, by out_point_mont, const uint8_t *data,
+static void elligator2_ed25519_fast(ge_p3 *out_point, by out_point_bytes, const uint8_t *data,
                   size_t size, by public_key)
 {
     static const uint8_t SUITE  = 0x04;
@@ -366,17 +370,9 @@ static void elligator2_ed25519_fast(ge_p3 *out_point, by out_point_bytes, by out
     fe r;
     fe_frombytes(r, truncatedHash);
 
-#ifdef DEBUG
-    printf("----- r -----\n");
-    by rby;
-    fe_tobytes(rby, r);
-    by_print(rby);
-    printf("\n");
-  #endif
-
     // Montgomery constant A
     fe A;
-    elligator_fe_A(A);
+    fe_A(A);
 
     // Legendre symbols
     fe e1, e2;
@@ -394,7 +390,7 @@ static void elligator2_ed25519_fast(ge_p3 *out_point, by out_point_bytes, by out
 
     // Square root of u=2
     fe u252m2;
-    fe_u252m2(u252m2);
+    fe_sqrt_2(u252m2);
 
     // Square root of A
     fe sqA;
@@ -437,7 +433,7 @@ static void elligator2_ed25519_fast(ge_p3 *out_point, by out_point_bytes, by out
 
     // A3 = A ** 3
     fe A3;
-    elligator_fe_A3(A3);
+    fe_A3(A3);
 
     // z1 = (x - 1) * A ** 3
     fe z1;
@@ -474,7 +470,7 @@ static void elligator2_ed25519_fast(ge_p3 *out_point, by out_point_bytes, by out
     // 3. (sqr, e) = (v, legendre(w))
     // (sqr, e1) = (v, lengendre(w))
 
-    fe_sqrt_and_legendre2(sqr, e1, z1);
+    fe_fraction_sqrt_and_legendre(sqr, e1, z1);
 
     // sqr = sqr * (z1 ** 2) * (recip ** 3) ** 10
     fe_sq(z1, z2);
@@ -540,12 +536,7 @@ static void elligator2_ed25519_fast(ge_p3 *out_point, by out_point_bytes, by out
     fe_mul(sqr, sqr, recip);
 
     // absolute value of (X/Z)
-/*  fe_invert(t0, sqr);
-    fe_mul(t0, t0, sqA);
-    fe_neg(t1, sqr);
-    b = fe_parity(t0);
-    fe_cmov(sqr, t1, b);
-*/
+
     fe_copy(p1p1.X, sqA);         // X         = sqA
     fe_copy(p1p1.Z, sqr);         // Z         = sqr
 
@@ -588,14 +579,6 @@ static void elligator2_ed25519_fast(ge_p3 *out_point, by out_point_bytes, by out
 
     fe_tobytes(out_point_bytes, t1);
     out_point_bytes[31] ^= fe_isnegative(sign) << 7;
-    fe_mul(minvert, minvert, sqr);            // minvert = (Z*(Z-Y))^-1
-    fe_mul(minvert, minvert, out_point->Z);    // minvert = (Z-Y)^-1
-    fe_copy(temp, out_point->Z);               // temp = Z
-    fe_add(temp, temp, out_point->Y);          // temp = Z+Y
-    fe_mul(minvert, minvert, temp);           // minvert = (Z+Y)/(Z-Y)
-    fe_tobytes(out_point_mont, minvert);
-
-
 }
 
 
@@ -629,17 +612,9 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
     fe r;
     fe_frombytes(r, truncatedHash);
 
-#ifdef DEBUG
-    printf("----- r -----\n");
-    by rby;
-    fe_tobytes(rby, r);
-    by_print(rby);
-    printf("\n");
-  #endif
-
     // Montgomery constant A
     fe A;
-    elligator_fe_A(A);
+    fe_A(A);
 
     // Legendre symbols
     fe e1, e2;
@@ -657,7 +632,7 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
 
     // Square root of u=2
     fe u252m2;
-    fe_u252m2(u252m2);
+    fe_sqrt_2(u252m2);
 
     // Square root of A
     fe sqA;
@@ -745,12 +720,7 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
     fe_mul(sqA, sqA, uf);         // sqA       = uf * A^(1/2)
 
     // absolute value of (X/Z)
-/*  fe_invert(t0, sqr);
-    fe_mul(t0, t0, sqA);
-    fe_neg(t1, sqr);
-    b = fe_parity(t0);
-    fe_cmov(sqr, t1, b);
-*/
+
     fe_copy(p1p1.X, sqA);         // X         = sqA
     fe_copy(p1p1.Z, sqr);         // Z         = sqr
 
