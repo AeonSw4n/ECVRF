@@ -30,12 +30,13 @@
 
 */
 
-static void int_cmov(int *t0, int t1, unsigned int b)
+static void cswap(uint8_t *t0, uint8_t *t1, unsigned int b)
 {
   b = 0-b;
-  int x = (*t0) ^ t1;
+  uint8_t x = (*t0) ^ (*t1);
   x &= b;
-  *t0 = (*t0)^x;
+  *t0 ^= x;
+  *t1 ^= x;
 }
 
 static void fe_mul121666(fe h, fe f)
@@ -162,6 +163,64 @@ static void ge_dedicated_add(ge_p3 *r, ge_p3 *p, ge_p3 *q)
   fe_mul(r->Z, F, G);         // Z3 = F * G
 }
 
+static int ge_p3_frombytes(ge_p3 *h, const uint8_t *s)
+{
+    fe u;
+    fe v;
+    fe v3;
+    fe vxx;
+    fe check;
+
+    fe_frombytes(h->Y, s);
+    fe_1(h->Z);
+    fe_sq(u, h->Y);
+    fe_mul(v, u, d);
+    fe_sub(u, u, h->Z); /* u = y^2-1 */
+    fe_add(v, v, h->Z); /* v = dy^2+1 */
+
+    fe_sq(v3, v);
+    fe_mul(v3, v3, v); /* v3 = v^3 */
+    fe_sq(h->X, v3);
+    fe_mul(h->X, h->X, v);
+    fe_mul(h->X, h->X, u); /* x = uv^7 */
+
+    fe_pow22523(h->X, h->X); /* x = (uv^7)^((q-5)/8) */
+    fe_mul(h->X, h->X, v3);
+    fe_mul(h->X, h->X, u); /* x = uv^3(uv^7)^((q-5)/8) */
+
+    fe_sq(vxx, h->X);
+    fe_mul(vxx, vxx, v);
+    fe_sub(check, vxx, u); /* vx^2-u */
+
+    unsigned int b;
+    fe status, correct, error;
+    fe_1(status);
+    fe_1(correct);
+    fe_neg(error, status);
+
+    b = fe_isnonzero(check);
+
+    fe check2;
+    fe_add(check2, vxx, u);
+    fe hX;
+    fe_mul(hX, h->X, sqrtm1);
+
+    fe_cmov(correct, error, b);
+    fe_cmov(check, check2, b);
+    fe_cmov(h->X, hX, b);
+
+
+    b = fe_isnonzero(check);
+    fe_cmov(status, correct, b);
+
+    b = fe_isnegative(h->X) != (s[31] >> 7);
+    fe_neg(hX, h->X);
+    fe_cmov(h->X, hX, b);
+
+    fe_mul(h->T, h->X, h->Y);
+    return fe_isnegative(status);
+}
+
 /*
   merging two tobytes inversions using the multiplication trick
   uint8_t[32] out1 <-- p
@@ -190,7 +249,7 @@ static void ge_p3_merge_two_tobytes(by out1, by out2, ge_p3 *p, ge_p3 *q)
   out2[31] ^= fe_isnegative(x) << 7;
 }
 
-static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
+static void double_scalar_fixed_point_mult_xor(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
                                               const uint8_t scalar1[32], const uint8_t scalar2[32])
 {
   ge_p3 sum[4];
@@ -232,41 +291,49 @@ static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], g
   ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
 }
 
-static void double_scalar_fixed_point_mult_secure(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
+static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
                                               const uint8_t scalar1[32], const uint8_t scalar2[32])
 {
   ge_p3 sum[4];
   ge_p1p1 tp1;
   ge_cached tca;
 
+  uint8_t index[4];
+
   int pos;
-  for(pos = 0; pos < 4; pos++)
+  for(pos = 0; pos < 4; pos++){
+    index[pos] = pos;
     ge_p3_0(&sum[pos]);
+  }
 
   ge_p3 P;
   ge_p3_copy(&P, H);
 
-  unsigned int swap1 = 0;
 
   for(pos = 0; pos < 255; ++pos){
     unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
     unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
 
-    swap1 ^= b1;
-    ge_p3_cswap(&sum[2], &sum[3], swap1);
-    ge_p3_cswap(&sum[1], &sum[2], b2);
-    ge_p3_cswap(&sum[0], &sum[1], b1 || b2);
-    swap1 = b1;
+    for(int i=2; i>=0; i--){
+      unsigned int b = (index[i+1] == (b1 + 2*b2));
+      ge_p3_cswap(&sum[i], &sum[i+1], b);
+      cswap(&index[i], &index[i+1], b);
+    }
 
     ge_dedicated_add(&sum[0], &sum[0], &P);
-
-    ge_p3_cswap(&sum[0], &sum[1], b1 || b2);
-    ge_p3_cswap(&sum[1], &sum[2], b2);
 
     ge_p3_dbl(&tp1, &P);
     ge_p1p1_to_p3(&P, &tp1);
 
+  }
 
+  for(int i=0; i<3; i++){
+    for(int j=2; j>=i; j--){
+      unsigned int b;
+      b = (index[j+1] == i);
+      ge_p3_cswap(&sum[j], &sum[j+1], b);
+      cswap(&index[j], &index[j+1], b);
+    }
   }
 
   ge_dedicated_add(&sum[1], &sum[1], &sum[3]);
@@ -367,8 +434,7 @@ static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe ou
 //can save one inversion combining two ladders
 //with inversion optimization, total added cost is 3 exponentiations, with inv/sqr total is 2
 //tobytes adds 2 more inversions to the total
-static void montgomery_ladder_to_edwards(ge_p3 *out,
-                                       const uint8_t scalar[32],
+static void montgomery_ladder_to_edwards(ge_p3 *out, const uint8_t scalar[32],
                                        const uint8_t in_x[32], const ge_p3 *in_P)
 {
 
@@ -418,64 +484,6 @@ static void montgomery_ladder_to_edwards(ge_p3 *out,
 
 }
 
-static int ge_p3_frombytes(ge_p3 *h, const uint8_t *s)
-{
-    fe u;
-    fe v;
-    fe v3;
-    fe vxx;
-    fe check;
-
-    fe_frombytes(h->Y, s);
-    fe_1(h->Z);
-    fe_sq(u, h->Y);
-    fe_mul(v, u, d);
-    fe_sub(u, u, h->Z); /* u = y^2-1 */
-    fe_add(v, v, h->Z); /* v = dy^2+1 */
-
-    fe_sq(v3, v);
-    fe_mul(v3, v3, v); /* v3 = v^3 */
-    fe_sq(h->X, v3);
-    fe_mul(h->X, h->X, v);
-    fe_mul(h->X, h->X, u); /* x = uv^7 */
-
-    fe_pow22523(h->X, h->X); /* x = (uv^7)^((q-5)/8) */
-    fe_mul(h->X, h->X, v3);
-    fe_mul(h->X, h->X, u); /* x = uv^3(uv^7)^((q-5)/8) */
-
-    fe_sq(vxx, h->X);
-    fe_mul(vxx, vxx, v);
-    fe_sub(check, vxx, u); /* vx^2-u */
-
-    unsigned int b;
-    fe status, correct, error;
-    fe_1(status);
-    fe_1(correct);
-    fe_neg(error, status);
-
-    b = fe_isnonzero(check);
-
-    fe check2;
-    fe_add(check2, vxx, u);
-    fe hX;
-    fe_mul(hX, h->X, sqrtm1);
-
-    fe_cmov(correct, error, b);
-    fe_cmov(check, check2, b);
-    fe_cmov(h->X, hX, b);
-
-
-    b = fe_isnonzero(check);
-    fe_cmov(status, correct, b);
-
-    b = fe_isnegative(h->X) != (s[31] >> 7);
-    fe_neg(hX, h->X);
-    fe_cmov(h->X, hX, b);
-
-    fe_mul(h->T, h->X, h->Y);
-    return fe_isnegative(status);
-}
-
 static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_t* pi)
 {
   /*
@@ -510,7 +518,6 @@ static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_
   return status;
 
 }
-
 
 static int ECVRF_proof_to_hash(uint8_t *beta, const uint8_t *pi)
 {
