@@ -564,6 +564,12 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
 }
 
 /*
+    Implements elligator2 on curve 25519
+    Point returned in projective system through out_point and in
+    bytes format through out_point_bytes. Point derived from
+    field element r.
+
+    Variables:
     A           - Montgomery constant A
     A3          - A ** 3
     e           - Legendre symbol
@@ -576,8 +582,11 @@ static void elligator2_ed25519(ge_p3 *out_point, by out_point_bytes, by out_poin
     y           - Edwards y-coodrinate
     p1p1        - Edwards point, completed system
     p2          - Edwards point, projective system
+
+    cost: 2S (exponentiations have similar cost to fe_sq per bit)
 */
-static void elligator2_ed25519_fast(ge_p3 *out_point, by out_point_bytes, const fe r)
+static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32],
+                                                    const fe r)
 {
     fe A, A3, e, one, sqrt2, sqrtAp2, v, v2, w, w2, y;
     fe z0, z1, t0, t1, t2, t3, recip, recip2, recip3, recip9, recip21, minvert;
@@ -688,6 +697,10 @@ static void elligator2_ed25519_fast(ge_p3 *out_point, by out_point_bytes, const 
     out_point_bytes[31] ^= fe_isnegative(t2) << 7;
 }
 
+/*
+    Controler for ECVRF_hash_to_curve_elligator2_25519
+    Derives input field element for elligator2 from alpha and the public key
+*/
 static void ECVRF_alpha_to_curve(ge_p3 *out_point, uint8_t out_point_bytes[32],
                   uint8_t public_key[32], const uint8_t *alpha, size_t alpha_len)
 {
@@ -717,6 +730,6 @@ static void ECVRF_alpha_to_curve(ge_p3 *out_point, uint8_t out_point_bytes[32],
   fe r;
   fe_frombytes(r, truncatedHash);
 
-  // map_to_curve
-  elligator2_ed25519_fast(out_point, out_point_bytes, r);
+  // elligator2
+  ECVRF_hash_to_curve_elligator2_25519(out_point, out_point_bytes, r);
 }
