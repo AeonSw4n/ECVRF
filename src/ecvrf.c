@@ -659,7 +659,7 @@ static void ECVRF_prove(double *t, uint8_t* pi, const uint8_t* SK,
   ge_p3 H;
   by H_string;
   by mUb;
-  elligator2_ed25519_fast(&H, H_string, alpha, alpha_len, y);
+  ECVRF_alpha_to_curve(&H, H_string, y, alpha, alpha_len);
 
 
   //4.  gamma = x*H
@@ -683,10 +683,6 @@ static void ECVRF_prove(double *t, uint8_t* pi, const uint8_t* SK,
   double_scalar_fixed_point_mult(kH, gamma, &H, nonce, truncatedHash);
   *t = (double)clock()-(*t);
   //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
-  by_print(kB);
-  printf("\n");
-  by_print(kH);
-  printf("\n");
   static const uint8_t SUITE  = 0x04;
   static const uint8_t TWO    = 0x02;
   uint8_t c_string[SHA512_DIGEST_LENGTH] = {0};
@@ -743,7 +739,7 @@ static int ECVRF_verify(const uint8_t *y, const uint8_t *pi,
 
   ge_p3 H;
   by H_string;
-  elligator2_ed25519_fast(&H, H_string, alpha, alpha_len, y);
+  ECVRF_alpha_to_curve(&H, H_string, y, alpha, alpha_len);
   ge_p2 U;
   ge_p3 Y;
   ge_frombytes_vartime(&Y, y);
@@ -773,10 +769,7 @@ static int ECVRF_verify(const uint8_t *y, const uint8_t *pi,
   montgomery_ladder_to_edwards(&s_H, s, Hby, &H);
   by s_Hby;
   ge_p3_tobytes(s_Hby, &s_H);
-  //by_print(s);
 
-  //by_print(s_Hby);
-  //printf("\n");
   ge_cached c_G_cached;
   ge_p1p1 V_p1p1;
   ge_p2 V;
@@ -794,10 +787,6 @@ static int ECVRF_verify(const uint8_t *y, const uint8_t *pi,
   static const uint8_t TWO    = 0x02;
   uint8_t cp_string[SHA512_DIGEST_LENGTH] = {0};
   SHA512_CTX cp_ctx;
-  printf("\n");
-  by_print(Uby);
-  printf("\n");
-  by_print(Vby);
   SHA512_Init(&cp_ctx);
   SHA512_Update(&cp_ctx, &SUITE, 1);
   SHA512_Update(&cp_ctx, &TWO, 1);
