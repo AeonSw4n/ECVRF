@@ -50,9 +50,28 @@ int ecvrf_init(ENGINE *e)
       printf("%2x", beta[i]);
   }
   printf("\n");
-  const uint8_t y_raw[64] = "d2c358b9b7937168ab115c6281272eed43d8a40cbaf77f3b09e72a815eae29a2";
+
+  uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
+  SHA512_CTX hash_ctx;
+  SHA512_Init(&hash_ctx);
+  SHA512_Update(&hash_ctx, x, 32);
+  SHA512_Final(hash, &hash_ctx);
+
+  by truncatedHash;
+  memcpy(truncatedHash, hash, 32);
+
+  truncatedHash[0]  &= 0xF8;
+  truncatedHash[31] &= 0x7F;
+  truncatedHash[31] |= 0x40;
+
+  ge_p3 p3;
   by y;
-  by_fromstr(y, y_raw);
+  ge_scalarmult_base(&p3, truncatedHash);
+  ge_p3_tobytes(y, &p3);
+
+  //const uint8_t y_raw[64] = "d2c358b9b7937168ab115c6281272eed43d8a40cbaf77f3b09e72a815eae29a2";
+  //by y;
+  //by_fromstr(y, y_raw);
   int eq = ECVRF_verify(y, pi, alpha, alpha_len);
   printf("ECVRF_verify returns: %d\n", eq);
  #endif
@@ -70,6 +89,8 @@ int ecvrf_init(ENGINE *e)
       }
       int counter = 0;
       int passed = 0;
+      int passed_verfity = 0;
+      int passed_verfity_false = 0;
       uint8_t line[256];
       while(fgets(line, 256, fp) != NULL && counter < 10000){
         by SK;
@@ -91,6 +112,9 @@ int ecvrf_init(ENGINE *e)
         ECVRF_prove(&t, pi, SK, line, len);
         t_total += t;
 
+        uint8_t alpha[256];
+        memcpy(alpha, line, len);
+
         fgets(line, 256, fp);
         for(i=0; i<80;i++){
           const char b[2] = {line[2*i], line[2*i+1]};
@@ -105,9 +129,35 @@ int ecvrf_init(ENGINE *e)
             break;
           }
         }
-
-        if(A == 1)
+        if(A)
           passed++;
+
+        uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
+        SHA512_CTX hash_ctx;
+        SHA512_Init(&hash_ctx);
+        SHA512_Update(&hash_ctx, SK, 32);
+        SHA512_Final(hash, &hash_ctx);
+
+        by truncatedHash;
+        memcpy(truncatedHash, hash, 32);
+
+        truncatedHash[0]  &= 0xF8;
+        truncatedHash[31] &= 0x7F;
+        truncatedHash[31] |= 0x40;
+
+        ge_p3 p3;
+        by y;
+        ge_scalarmult_base(&p3, truncatedHash);
+        ge_p3_tobytes(y, &p3);
+
+        A = ECVRF_verify(y, pi, alpha, len);
+        if(A)
+          passed_verfity++;
+
+        y[0] += 1;
+        A = ECVRF_verify(y, pi, alpha, len);
+        if(A)
+          passed_verfity_false++;
 
       #ifdef DEBUG
         if(A == 0){
@@ -131,7 +181,7 @@ int ecvrf_init(ENGINE *e)
         fgets(line, 256, fp);
         counter++;
       }
-      printf("\n\n Passed/Counter: %d/%d\n", passed, counter);
+      printf("\n\n Passed Prove: %d/%d  ||  Passed Verify: %d/%d\n", passed, counter, passed_verfity-passed_verfity_false, counter);
     #endif
     t_average = ((double)rep*t_average + t_total)/((double)rep + 1.0);
   }

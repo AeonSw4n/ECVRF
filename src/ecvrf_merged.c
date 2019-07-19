@@ -730,56 +730,54 @@ static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32],
   ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
 }
 
-static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe out_z3[32],
-                                       const uint8_t scalar[32], const uint8_t in_x[32])
+static void montgomery_ladder(fe out_u2[32], fe out_z2[32], fe out_u3[32], fe out_z3[32],
+                                       const uint8_t scalar[32], size_t scalar_len, const uint8_t in_u[32])
 {
-    fe x1, x2, z2, x3, z3, tmp0, tmp1;
+    fe u1, u2, z2, u3, z3, tmp0, tmp1;
     uint8_t e[32];
     unsigned swap = 0;
     int pos;
-
-    memcpy(e, scalar, 32);
+    memcpy(e, scalar, scalar_len);
     //e[0] &= 248;
     //e[31] &= 127;
     //e[31] |= 64;
-    fe_frombytes(x1, in_x);
-    fe_1(x2);
+    fe_frombytes(u1, in_u);
+    fe_1(u2);
     fe_0(z2);
-    fe_copy(x3, x1);
+    fe_copy(u3, u1);
     fe_1(z3);
 
-    for (pos = 254; pos >= 0; --pos) {
+    for (pos = 8*scalar_len-1; pos >= 0; --pos) {
         unsigned b = 1 & (e[pos / 8] >> (pos & 7));
-        //printf("%d", b);
         swap ^= b;
-        fe_cswap(x2, x3, swap);
+        fe_cswap(u2, u3, swap);
         fe_cswap(z2, z3, swap);
         swap = b;
-        fe_sub(tmp0, x3, z3);
-        fe_sub(tmp1, x2, z2);
-        fe_add(x2, x2, z2);
-        fe_add(z2, x3, z3);
-        fe_mul(z3, tmp0, x2);
+        fe_sub(tmp0, u3, z3);
+        fe_sub(tmp1, u2, z2);
+        fe_add(u2, u2, z2);
+        fe_add(z2, u3, z3);
+        fe_mul(z3, tmp0, u2);
         fe_mul(z2, z2, tmp1);
         fe_sq(tmp0, tmp1);
-        fe_sq(tmp1, x2);
-        fe_add(x3, z3, z2);
+        fe_sq(tmp1, u2);
+        fe_add(u3, z3, z2);
         fe_sub(z2, z3, z2);
-        fe_mul(x2, tmp1, tmp0);
+        fe_mul(u2, tmp1, tmp0);
         fe_sub(tmp1, tmp1, tmp0);
         fe_sq(z2, z2);
         fe_mul121666(z3, tmp1);
-        fe_sq(x3, x3);
+        fe_sq(u3, u3);
         fe_add(tmp0, tmp0, z3);
-        fe_mul(z3, x1, z2);
+        fe_mul(z3, u1, z2);
         fe_mul(z2, tmp1, tmp0);
     }
-    fe_cswap(x2, x3, swap);
+    fe_cswap(u2, u3, swap);
     fe_cswap(z2, z3, swap);
 
-    fe_copy(out_x2, x2);
+    fe_copy(out_u2, u2);
     fe_copy(out_z2, z2);
-    fe_copy(out_x3, x3);
+    fe_copy(out_u3, u3);
     fe_copy(out_z3, z3);
 
 
@@ -827,44 +825,44 @@ static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_
     fe_tobytes(v2, t5);
 }
 
-static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe X, const fe Y, const fe Z)
+static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe U, const fe V, const fe Z)
 {
     fe t0, sqrtnAp2;
     ge_p1p1 p;
     fe_sqrt_neg_A_plus_2(sqrtnAp2);
-    fe_add(t0, X, Z);
-    fe_mul(p.X, X, sqrtnAp2);
-    fe_copy(p.Z, Y);
-    fe_sub(p.Y, X, Z);
-    fe_add(p.T, X, Z);
+    fe_add(t0, U, Z);
+    fe_mul(p.X, U, sqrtnAp2);
+    fe_copy(p.Z, V);
+    fe_sub(p.Y, U, Z);
+    fe_add(p.T, U, Z);
     ge_p1p1_to_p3(r, &p);
 }
 
-static void montgomery_recover_point(fe X, fe Y, fe Z, const uint8_t xb[32], const uint8_t yb[32],
-                                const fe X1, const fe Z1, const fe X2, const fe Z2)
+static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], const uint8_t vb[32],
+                                const fe U1, const fe Z1, const fe U2, const fe Z2)
 {
-    fe x, y, AA, T1, T2, T3, T4;
-    fe_frombytes(x, xb);
-    fe_frombytes(y, yb);
+    fe u, v, AA, T1, T2, T3, T4;
+    fe_frombytes(u, ub);
+    fe_frombytes(v, vb);
     fe_2A(AA);
-    fe_mul(T1, x, Z1);  //  1.  T1 <--  x * Z1
-    fe_add(T2, X1, T1); //  2.  T2 <-- X1 + T1
-    fe_sub(T3, X1, T1); //  3.  T3 <-- X1 - T1
+    fe_mul(T1, u, Z1);  //  1.  T1 <--  u * Z1
+    fe_add(T2, U1, T1); //  2.  T2 <-- U1 + T1
+    fe_sub(T3, U1, T1); //  3.  T3 <-- U1 - T1
     fe_mul(T3, T3, T3); //  4.  T3 <-- T3 * T3
-    fe_mul(T3, T3, X2); //  5.  T3 <-- T3 * X2
+    fe_mul(T3, T3, U2); //  5.  T3 <-- T3 * U2
     fe_mul(T1, AA, Z1); //  6.  T1 <-- 2A * Z1
     fe_add(T2, T2, T1); //  7.  T2 <-- T2 + T1
-    fe_mul(T4, x, X1);  //  8.  T4 <--  x * X1
+    fe_mul(T4, u, U1);  //  8.  T4 <--  u * U1
     fe_add(T4, T4, Z1); //  9.  T4 <-- T4 + Z1
     fe_mul(T2, T2, T4); // 10.  T2 <-- T2 * T4
     fe_mul(T1, T1, Z1); // 11.  T1 <-- T1 * Z1
     fe_sub(T2, T2, T1); // 12.  T2 <-- T2 - T1
     fe_mul(T2, T2, Z2); // 13.  T2 <-- T2 * Z2
-    fe_sub(Y, T2, T3);  // 14.   Y <-- T2 - T3
-    fe_add(T1, y, y);   // 15.  T1 <--  2 * y
+    fe_sub(V, T2, T3);  // 14.   V <-- T2 - T3
+    fe_add(T1, v, v);   // 15.  T1 <--  2 * v
     fe_mul(T1, T1, Z1); // 16.  T1 <-- T1 * Z1
     fe_mul(T1, T1, Z2); // 17.  T1 <-- T1 * Z2
-    fe_mul(X, T1, X1);  // 18.   X <-- T1 * X1
+    fe_mul(U, T1, U1);  // 18.   U <-- T1 * U1
     fe_mul(Z, T1, Z1);  // 19.   Z <-- T1 * Z1
 }
 
@@ -875,6 +873,22 @@ static void ge_p2_to_p3(ge_p3 *r, const ge_p2 *p)
     fe_sq(r->Z, p->Z);
     fe_mul(r->T, r->X, r->Y);
 }
+
+static void ge_p3_neg(ge_p3 *r, const ge_p3 *p)
+{
+  fe_neg(r->X, p->X);
+  fe_neg(r->T, p->T);
+}
+
+static void montgomery_ladder_scalar_mult(ge_p3 *r, const uint8_t *scalar, const size_t scalar_len, const uint8_t u[32], const uint8_t v[32])
+{
+  fe u1, z1, u2, z2;
+  montgomery_ladder(u1, z1, u2, z2, scalar, scalar_len, u);
+  fe u_rec, v_rec, z_rec;
+  montgomery_recover_point(u_rec, v_rec, z_rec, u, v, u1, z1, u2, z2);
+  montgomery_p2_to_ge_p3(r, u_rec, v_rec, z_rec);
+}
+
 
 static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_t* pi)
 {
@@ -1135,31 +1149,22 @@ static int ECVRF_verify(const uint8_t *y, const uint8_t *pi,
   ge_p2 U_p2;
   ge_p3 U, Y;
   ge_frombytes_vartime(&Y, y);
-  fe_neg(Y.X, Y.X);
-  fe_neg(Y.T, Y.T);
+  ge_p3_neg(&Y, &Y);
   ge_double_scalarmult_vartime(&U_p2, c, &Y, s);
   ge_p2_to_p3(&U, &U_p2);
 
-  fe GX1, GZ1, GX2, GZ2, HX1, HZ1, HX2, HZ2;
-  by Gx, Gy, Hx, Hy;
-  ge_p3_merge_two_to_montgomery(Gx, Gy, Hx, Hy, &G, &H);
-  montgomery_ladder(GX1, GZ1, GX2, GZ2, c, Gx);
-  montgomery_ladder(HX1, HZ1, HX2, HZ2, s, Hx);
-  fe GX, GY, GZ, HX, HY, HZ;
-  montgomery_recover_point(GX, GY, GZ, Gx, Gy, GX1, GZ1, GX2, GZ2);
-  montgomery_recover_point(HX, HY, HZ, Hx, Hy, HX1, HZ1, HX2, HZ2);
-
+  by Gu, Gv, Hu, Hv;
+  ge_p3_merge_two_to_montgomery(Gu, Gv, Hu, Hv, &G, &H);
   ge_p3 c_G, s_H;
-  montgomery_p2_to_ge_p3(&c_G, GX, GY, GZ);
-  montgomery_p2_to_ge_p3(&s_H, HX, HY, HZ);
-
-
+  montgomery_ladder_scalar_mult(&c_G, c, 16, Gu, Gv);
+  montgomery_ladder_scalar_mult(&s_H, s, 32, Hu, Hv);
   ge_cached c_G_cached;
   ge_p1p1 V_p1p1;
   ge_p3 V;
   ge_p3_to_cached(&c_G_cached, &c_G);
   ge_sub(&V_p1p1, &s_H, &c_G_cached);
   ge_p1p1_to_p3(&V, &V_p1p1);
+
   by Uby, Vby;
   ge_p3_merge_two_tobytes(Uby, Vby, &U, &V);
 
@@ -1181,14 +1186,5 @@ static int ECVRF_verify(const uint8_t *y, const uint8_t *pi,
   memset(cp, 0, 32);
   memcpy(cp, cp_string, 16);
 
-  int eq = 1;
-  int i;
-  for(i=0; i<32; i++){
-    if(c[i] != cp[i]){
-      eq = 0;
-      break;
-    }
-  }
-
-  return eq;
+  return by_cmp(c, cp);
 }
