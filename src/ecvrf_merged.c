@@ -267,7 +267,7 @@ static void fe_fraction_sqrt_and_legendre(fe sqrt, fe e, const fe w)
  * b           - Conditional value
  * one         - 1 constant
  * sqrt2       - Square root of u=2
- * sqrtAp2     - Square root of A+2
+ * sqrtnAp2     - Square root of A+2
  * v, v2       - Montgomery y-coodrinates
  * w, w2       - Square of v
  * y           - Edwards y-coodrinate
@@ -279,13 +279,13 @@ static void fe_fraction_sqrt_and_legendre(fe sqrt, fe e, const fe w)
 static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32],
                                                     const fe r)
 {
-    fe A, A3, e, one, sqrt2, sqrtAp2, v, v2, w, w2, y;
+    fe A, A3, e, one, sqrt2, sqrtnAp2, v, v2, w, w2, y;
     fe z0, z1, t0, t1, t2, t3, recip, recip2, recip3, recip9, recip21, minvert;
     unsigned int b;
     ge_p1p1 p1p1;
     ge_p2 p2;
 
-    fe_A(A), fe_A3(A3), fe_1(one), fe_sqrt_2(sqrt2), fe_sqrt_A_plus_2(sqrtAp2);
+    fe_A(A), fe_A3(A3), fe_1(one), fe_sqrt_2(sqrt2), fe_sqrt_neg_A_plus_2(sqrtnAp2);
 
     // recip = 1 + 2 * (r ** 2)
     fe_sq2(recip, r);
@@ -294,12 +294,12 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     // recip2 = recip ** 2
     fe_sq(recip2, recip);
 
-    // z0 = [A * recip ** 2] - [(recip - 1) * A ** 3]
+    // z0 = [(recip - 1) * A ** 3] - [A * recip ** 2]
     // z1 = z0
     fe_sub(z0, recip, one);
     fe_mul(z0, z0, A3);
     fe_mul(z1, recip2, A);
-    fe_sub(z0, z1, z0); // here
+    fe_sub(z0, z0, z1); // here
     fe_copy(z1, z0);
 
     // recip3 = recip ** 3
@@ -348,11 +348,11 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     // (x, y) = (|X/Z|, Y/T) is the +/- Edwards curve point before cofactor clearing
     // x = (sqrt(A + 2) * t2) / (v * recip)
     // y = (t2 - recip) / (t2 + recip)
-    fe_mul(sqrtAp2, sqrtAp2, t2);
+    fe_mul(sqrtnAp2, sqrtnAp2, t2);
     fe_mul(v, v, recip);
     fe_sub(p1p1.Y, t2, recip);
     fe_add(p1p1.T, t2, recip);
-    fe_copy(p1p1.X, sqrtAp2);
+    fe_copy(p1p1.X, sqrtnAp2);
     fe_copy(p1p1.Z, v);
 
     // out_point = 8(x, y)
@@ -375,7 +375,7 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     // fix sign of 8(x, y) if (x, y) was negative
     fe_mul(t1, minvert, t0);
     fe_mul(t2, t1, out_point->Z);
-    fe_mul(t2, t2, sqrtAp2);
+    fe_mul(t2, t2, sqrtnAp2);
     fe_neg(t3, out_point->X);
     fe_neg(t0, out_point->T);
     b = !fe_ispositive(t2);
@@ -790,8 +790,8 @@ static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe ou
 static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_t u2[32], uint8_t v2[32],
                                               const ge_p3 *p, const ge_p3 *q)
 {
-    fe nAp2, up, uq, t0, t1, t2, t3, t4, t5;
-    fe_sqrt_neg_A_plus_2(nAp2);
+    fe sqrtnAp2, up, uq, t0, t1, t2, t3, t4, t5;
+    fe_sqrt_neg_A_plus_2(sqrtnAp2);
     fe_sub(t0, p->Z, p->Y);
     fe_sub(t1, q->Z, q->Y);
 
@@ -816,24 +816,24 @@ static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_
     fe_mul(t5, t5, t2);
     fe_mul(t5, t5, q->X);
     fe_mul(t5, t5, p->Z);
-    fe_mul(t5, t5, nAp2);
+    fe_mul(t5, t5, sqrtnAp2);
     fe_tobytes(v1, t5);
 
     fe_mul(t5, uq, t4);
     fe_mul(t5, t5, t2);
     fe_mul(t5, t5, p->X);
     fe_mul(t5, t5, q->Z);
-    fe_mul(t5, t5, nAp2);
+    fe_mul(t5, t5, sqrtnAp2);
     fe_tobytes(v2, t5);
 }
 
 static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe X, const fe Y, const fe Z)
 {
-    fe t0, nAp2;
+    fe t0, sqrtnAp2;
     ge_p1p1 p;
-    fe_sqrt_neg_A_plus_2(nAp2);
+    fe_sqrt_neg_A_plus_2(sqrtnAp2);
     fe_add(t0, X, Z);
-    fe_mul(p.X, X, nAp2);
+    fe_mul(p.X, X, sqrtnAp2);
     fe_copy(p.Z, Y);
     fe_sub(p.Y, X, Z);
     fe_add(p.T, X, Z);

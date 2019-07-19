@@ -6,7 +6,7 @@
 #include "../lib/env.h"
 
 //#define DEBUG
-//#define TESTER
+#define TESTER
 
 #define ELLIGATOR2_TESTS ROOT "/tests/tests_elligator2.txt"
 #define PROVE_TESTS ROOT "/tests/tests_prove.txt"
