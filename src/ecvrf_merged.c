@@ -21,6 +21,20 @@ static void fe_A(fe out)
 
 }
 
+static void fe_2A(fe out)
+{
+  out[0] = 973324;
+  out[1] = 0;
+  out[2] = 0;
+  out[3] = 0;
+  out[4] = 0;
+  out[5] = 0;
+  out[6] = 0;
+  out[7] = 0;
+  out[8] = 0;
+  out[9] = 0;
+}
+
 /**
  * Returns, via parameter out, a field element equal to
  * A^3, where A = 48662 is the coefficient in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
@@ -56,6 +70,20 @@ static void fe_sqrt_A_plus_2(fe out)
   out[7] = -5634116;
   out[8] = -25139868;
   out[9] = 5270574;
+}
+
+static void fe_sqrt_neg_A_plus_2(fe out)
+{
+  out[0] = -12222970;
+  out[1] = -8312128;
+  out[2] = -11511410;
+  out[3] = 9067497;
+  out[4] = -15300785;
+  out[5] = -241793;
+  out[6] = 25456130;
+  out[7] = 14121551;
+  out[8] = -12187136;
+  out[9] = 3972024;
 }
 
 /**
@@ -271,7 +299,7 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     fe_sub(z0, recip, one);
     fe_mul(z0, z0, A3);
     fe_mul(z1, recip2, A);
-    fe_sub(z0, z1, z0);
+    fe_sub(z0, z1, z0); // here
     fe_copy(z1, z0);
 
     // recip3 = recip ** 3
@@ -533,26 +561,26 @@ static void ge_p3_cswap(ge_p3 *p, ge_p3 *q, unsigned int b)
  */
 static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
 {
-  fe A, B, C, D, E, F, G, H;
+    fe A, B, C, D, E, F, G, H;
 
-  fe_sub(A, p->Y, p->X);      // A = (Y1 - X1)
-  fe_add(B, q->Y, q->X);      // B = (Y2 + X2)
-  fe_mul(A, A, B);            // A = (Y1 - X1) * (Y2 + X2)
-  fe_add(B, p->Y, p->X);      // B = (Y1 + X1)
-  fe_sub(C, q->Y, q->X);      // C = (Y2 - X2)
-  fe_mul(B, B, C);            // B = (Y1 + X1) * (Y2 - X2)
-  fe_add(C, p->Z, p->Z);      // C = 2 Z1
-  fe_mul(C, C, q->T);         // C = 2 Z1 * T2
-  fe_add(D, p->T, p->T);      // D = 2 T1
-  fe_mul(D, D, q->Z);         // D = 2 T1 * Z2
-  fe_add(E, D, C);            // E = D + C
-  fe_sub(F, B, A);            // F = B - A
-  fe_add(G, B, A);            // G = B + A
-  fe_sub(H, D, C);            // H = D - C
-  fe_mul(r->X, E, F);         // X3 = E * F
-  fe_mul(r->Y, G, H);         // Y3 = G * H
-  fe_mul(r->T, E, H);         // T3 = E * H
-  fe_mul(r->Z, F, G);         // Z3 = F * G
+    fe_sub(A, p->Y, p->X);      //  1.  A = (Y1 - X1)
+    fe_add(B, q->Y, q->X);      //  2.  B = (Y2 + X2)
+    fe_mul(A, A, B);            //  3.  A = (Y1 - X1) * (Y2 + X2)
+    fe_add(B, p->Y, p->X);      //  4.  B = (Y1 + X1)
+    fe_sub(C, q->Y, q->X);      //  5.  C = (Y2 - X2)
+    fe_mul(B, B, C);            //  6.  B = (Y1 + X1) * (Y2 - X2)
+    fe_add(C, p->Z, p->Z);      //  7.  C = 2 Z1
+    fe_mul(C, C, q->T);         //  8.  C = 2 Z1 * T2
+    fe_add(D, p->T, p->T);      //  9.  D = 2 T1
+    fe_mul(D, D, q->Z);         // 10.  D = 2 T1 * Z2
+    fe_add(E, D, C);            // 11.  E = D + C
+    fe_sub(F, B, A);            // 12.  F = B - A
+    fe_add(G, B, A);            // 13.  G = B + A
+    fe_sub(H, D, C);            // 14.  H = D - C
+    fe_mul(r->X, E, F);         // 15.  X3 = E * F
+    fe_mul(r->Y, G, H);         // 16.  Y3 = G * H
+    fe_mul(r->T, E, H);         // 17.  T3 = E * H
+    fe_mul(r->Z, F, G);         // 18.  Z3 = F * G
 }
 
 /**
@@ -646,50 +674,13 @@ static void ge_p3_merge_two_tobytes(uint8_t out1[32], uint8_t out2[32],
   out2[31] ^= fe_isnegative(x) << 7;
 }
 
-static void double_scalar_fixed_point_mult_xor(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
-                                              const uint8_t scalar1[32], const uint8_t scalar2[32])
-{
-  ge_p3 sum[4];
-  ge_p1p1 tp1;
-  ge_cached tca;
-
-  int pos;
-  for(pos = 0; pos < 4; pos++)
-    ge_p3_0(&sum[pos]);
-
-  ge_p3 P;
-  ge_p3_copy(&P, H);
-
-  unsigned int swap1 = 0;
-  unsigned int swap2 = 0;
-
-  for(pos = 0; pos < 255; ++pos){
-    unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
-    unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
-
-    ge_p3_cswap(&sum[0], &sum[3], (b1 && b2) ^ (swap1 && swap2));
-    ge_p3_cswap(&sum[1], &sum[2], swap2 ^ b2);
-    swap1 = b1 ^ b2;
-    ge_dedicated_add(&sum[swap1], &sum[swap1], &P);
-    swap1 = b1;
-    swap2 = b2;
-
-    ge_p3_dbl(&tp1, &P);
-    ge_p1p1_to_p3(&P, &tp1);
-
-
-  }
-  ge_p3_cswap(&sum[1], &sum[2], swap1 && swap2);
-  ge_p3_cswap(&sum[1], &sum[2], swap2);
-
-  ge_dedicated_add(&sum[1], &sum[1], &sum[3]);
-  ge_dedicated_add(&sum[2], &sum[2], &sum[3]);
-
-  ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
-}
-
-static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
-                                              const uint8_t scalar1[32], const uint8_t scalar2[32])
+/**
+ * Calculate (out1, out2) = (scalar1 * H, scalar2 * H) in constant time
+ *
+ * Cost: 12M + 4S + 1C
+ */
+static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32],
+                        const ge_p3 *H, const uint8_t scalar1[32], const uint8_t scalar2[32])
 {
   ge_p3 sum[4];
   ge_p1p1 tp1;
@@ -731,38 +722,6 @@ static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32], g
       ge_p3_cswap(&sum[j], &sum[j+1], b);
       cswap(&index[j], &index[j+1], b);
     }
-  }
-
-  ge_dedicated_add(&sum[1], &sum[1], &sum[3]);
-  ge_dedicated_add(&sum[2], &sum[2], &sum[3]);
-
-  ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
-}
-
-static void double_scalar_fixed_point_mult_plain(uint8_t out1[32], uint8_t out2[32], ge_p3 *H,
-                                              const uint8_t scalar1[32], const uint8_t scalar2[32])
-{
-  ge_p3 sum[4];
-  ge_p1p1 tp1;
-  ge_cached tca;
-
-  int pos;
-  for(pos = 0; pos < 4; pos++)
-    ge_p3_0(&sum[pos]);
-
-  ge_p3 P;
-  ge_p3_copy(&P, H);
-
-
-  for(pos = 0; pos < 255; ++pos){
-    unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
-    unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
-
-    ge_dedicated_add(&sum[b1+2*b2], &sum[b1+2*b2], &P);
-
-    ge_p3_dbl(&tp1, &P);
-    ge_p1p1_to_p3(&P, &tp1);
-
   }
 
   ge_dedicated_add(&sum[1], &sum[1], &sum[3]);
@@ -823,62 +782,98 @@ static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe ou
     fe_copy(out_x3, x3);
     fe_copy(out_z3, z3);
 
+
+
     OPENSSL_cleanse(e, sizeof(e));
 }
 
-//can't find any way to combine square rooting
-//inversion and square root can be combined by (x^8 y)^(2^252-3)*x^3 for sqr, and then finding y^(2^255-2^252-17)=y^(7*2^252-17)=(y^(2^252-3)^7)*y^4 for the inv
-//can save one inversion combining two ladders
-//with inversion optimization, total added cost is 3 exponentiations, with inv/sqr total is 2
-//tobytes adds 2 more inversions to the total
-static void montgomery_ladder_to_edwards(ge_p3 *out, const uint8_t scalar[32],
-                                       const uint8_t in_x[32], const ge_p3 *in_P)
+static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_t u2[32], uint8_t v2[32],
+                                              const ge_p3 *p, const ge_p3 *q)
 {
+    fe nAp2, up, uq, t0, t1, t2, t3, t4, t5;
+    fe_sqrt_neg_A_plus_2(nAp2);
+    fe_sub(t0, p->Z, p->Y);
+    fe_sub(t1, q->Z, q->Y);
 
-  fe x2, z2, x3, z3;
-  montgomery_ladder(x2, z2, x3, z3, scalar, in_x);
-  by x2_by, x3_by, x3n_by;
-  fe x2_ed, x3_ed, x3n_ed;
-  fe temp;
-  fe t0, t1;
-  fe_add(t0, x2, z2);
-  fe_add(t1, x3, z3);
-  fe_mul(temp, t0, t1);
-  fe_invert(temp, temp);
+    fe_mul(t2, t0, t1);
+    fe_mul(t3, p->X, q->X);
+    fe_mul(t4, t2, t3);
+    fe_invert(t4, t4);
 
-  fe_mul(t1, temp, t1);
-  fe_sub(x2_ed, x2, z2);
-  fe_mul(x2_ed, t1, x2_ed);
+    fe_add(t5, p->Z, p->Y);
+    fe_mul(t5, t5, t4);
+    fe_mul(t5, t5, t3);
+    fe_mul(up, t5, t1);
+    fe_tobytes(u1, up);
 
-  fe_mul(t0, temp, t0);
-  fe_sub(x3_ed, x3, z3);
-  fe_mul(x3_ed, t0, x3_ed);
+    fe_add(t5, q->Z, q->Y);
+    fe_mul(t5, t5, t4);
+    fe_mul(t5, t5, t3);
+    fe_mul(uq, t5, t0);
+    fe_tobytes(u2, uq);
 
-  fe_tobytes(x2_by, x2_ed);
+    fe_mul(t5, up, t4);
+    fe_mul(t5, t5, t2);
+    fe_mul(t5, t5, q->X);
+    fe_mul(t5, t5, p->Z);
+    fe_mul(t5, t5, nAp2);
+    fe_tobytes(v1, t5);
 
-  ge_p3 x2_p3, x3n_p3;
-  ge_p1p1 x3n_p1;
-  ge_frombytes_vartime(&x2_p3, x2_by);
+    fe_mul(t5, uq, t4);
+    fe_mul(t5, t5, t2);
+    fe_mul(t5, t5, p->X);
+    fe_mul(t5, t5, q->Z);
+    fe_mul(t5, t5, nAp2);
+    fe_tobytes(v2, t5);
+}
 
-  ge_cached p_ca;
-  ge_p3_to_cached(&p_ca, in_P);
+static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe X, const fe Y, const fe Z)
+{
+    fe t0, nAp2;
+    ge_p1p1 p;
+    fe_sqrt_neg_A_plus_2(nAp2);
+    fe_add(t0, X, Z);
+    fe_mul(p.X, X, nAp2);
+    fe_copy(p.Z, Y);
+    fe_sub(p.Y, X, Z);
+    fe_add(p.T, X, Z);
+    ge_p1p1_to_p3(r, &p);
+}
 
-  ge_add(&x3n_p1, &x2_p3, &p_ca);
-  ge_p1p1_to_p3(&x3n_p3, &x3n_p1);
-  ge_p3_tobytes(x3n_by, &x3n_p3);
-  fe_frombytes(x3n_ed, x3n_by);
+static void montgomery_recover_point(fe X, fe Y, fe Z, const uint8_t xb[32], const uint8_t yb[32],
+                                const fe X1, const fe Z1, const fe X2, const fe Z2)
+{
+    fe x, y, AA, T1, T2, T3, T4;
+    fe_frombytes(x, xb);
+    fe_frombytes(y, yb);
+    fe_2A(AA);
+    fe_mul(T1, x, Z1);  //  1.  T1 <--  x * Z1
+    fe_add(T2, X1, T1); //  2.  T2 <-- X1 + T1
+    fe_sub(T3, X1, T1); //  3.  T3 <-- X1 - T1
+    fe_mul(T3, T3, T3); //  4.  T3 <-- T3 * T3
+    fe_mul(T3, T3, X2); //  5.  T3 <-- T3 * X2
+    fe_mul(T1, AA, Z1); //  6.  T1 <-- 2A * Z1
+    fe_add(T2, T2, T1); //  7.  T2 <-- T2 + T1
+    fe_mul(T4, x, X1);  //  8.  T4 <--  x * X1
+    fe_add(T4, T4, Z1); //  9.  T4 <-- T4 + Z1
+    fe_mul(T2, T2, T4); // 10.  T2 <-- T2 * T4
+    fe_mul(T1, T1, Z1); // 11.  T1 <-- T1 * Z1
+    fe_sub(T2, T2, T1); // 12.  T2 <-- T2 - T1
+    fe_mul(T2, T2, Z2); // 13.  T2 <-- T2 * Z2
+    fe_sub(Y, T2, T3);  // 14.   Y <-- T2 - T3
+    fe_add(T1, y, y);   // 15.  T1 <--  2 * y
+    fe_mul(T1, T1, Z1); // 16.  T1 <-- T1 * Z1
+    fe_mul(T1, T1, Z2); // 17.  T1 <-- T1 * Z2
+    fe_mul(X, T1, X1);  // 18.   X <-- T1 * X1
+    fe_mul(Z, T1, Z1);  // 19.   Z <-- T1 * Z1
+}
 
-  fe f;
-  fe_sub(f, x3_ed, x3n_ed);
-  // eq = 0   when x3_ed - x3n_ed   = 0
-  // eq = 1   when x3_ed - x3n_ed  != 0
-  unsigned eq = fe_isnonzero(f);
-  if(eq == 1){
-    fe_neg(x2_p3.X, x2_p3.X);
-    fe_neg(x2_p3.T, x2_p3.T);
-  }
-  ge_p3_copy(out, &x2_p3);
-
+static void ge_p2_to_p3(ge_p3 *r, const ge_p2 *p)
+{
+    fe_mul(r->X, p->X, p->Z);
+    fe_mul(r->Y, p->Y, p->Z);
+    fe_sq(r->Z, p->Z);
+    fe_mul(r->T, r->X, r->Y);
 }
 
 static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_t* pi)
@@ -1137,49 +1132,38 @@ static int ECVRF_verify(const uint8_t *y, const uint8_t *pi,
   ge_p3 H;
   by H_string;
   ECVRF_alpha_to_curve(&H, H_string, y, alpha, alpha_len);
-  ge_p2 U;
-  ge_p3 Y;
+  ge_p2 U_p2;
+  ge_p3 U, Y;
   ge_frombytes_vartime(&Y, y);
   fe_neg(Y.X, Y.X);
   fe_neg(Y.T, Y.T);
-  ge_double_scalarmult_vartime(&U, c, &Y, s);
-  //fe_neg(U.X, U.X);
+  ge_double_scalarmult_vartime(&U_p2, c, &Y, s);
+  ge_p2_to_p3(&U, &U_p2);
 
-  ge_p3 s_H, c_G;
-  fe mGx, mHx;
-  fe t0, t1;
-  fe_sub(mGx, G.Z, G.Y);
-  fe_sub(mHx, H.Z, H.Y);
-  fe_mul(t0, mHx, mGx);
-  fe_invert(t0, t0);
-  fe_add(t1, G.Z, G.Y);
-  fe_mul(t1, t1, t0);
-  fe_mul(t1, t1, mHx);  // u of G
-  by Gby;
-  fe_tobytes(Gby, t1);
-  montgomery_ladder_to_edwards(&c_G, c, Gby, &G);
-  fe_add(t1, H.Z, H.Y);
-  fe_mul(t1, t1, t0);
-  fe_mul(t1, t1, mGx);  // u of H
-  by Hby;
-  fe_tobytes(Hby, t1);
-  montgomery_ladder_to_edwards(&s_H, s, Hby, &H);
-  by s_Hby;
-  ge_p3_tobytes(s_Hby, &s_H);
+  fe GX1, GZ1, GX2, GZ2, HX1, HZ1, HX2, HZ2;
+  by Gx, Gy, Hx, Hy;
+  ge_p3_merge_two_to_montgomery(Gx, Gy, Hx, Hy, &G, &H);
+  montgomery_ladder(GX1, GZ1, GX2, GZ2, c, Gx);
+  montgomery_ladder(HX1, HZ1, HX2, HZ2, s, Hx);
+  fe GX, GY, GZ, HX, HY, HZ;
+  montgomery_recover_point(GX, GY, GZ, Gx, Gy, GX1, GZ1, GX2, GZ2);
+  montgomery_recover_point(HX, HY, HZ, Hx, Hy, HX1, HZ1, HX2, HZ2);
+
+  ge_p3 c_G, s_H;
+  montgomery_p2_to_ge_p3(&c_G, GX, GY, GZ);
+  montgomery_p2_to_ge_p3(&s_H, HX, HY, HZ);
+
 
   ge_cached c_G_cached;
   ge_p1p1 V_p1p1;
-  ge_p2 V;
+  ge_p3 V;
   ge_p3_to_cached(&c_G_cached, &c_G);
   ge_sub(&V_p1p1, &s_H, &c_G_cached);
-  ge_p1p1_to_p2(&V, &V_p1p1);
+  ge_p1p1_to_p3(&V, &V_p1p1);
   by Uby, Vby;
-  ge_tobytes(Uby, &U);
-  ge_tobytes(Vby, &V);
+  ge_p3_merge_two_tobytes(Uby, Vby, &U, &V);
 
 
-  //c' = ECVRF_hash_points(H, Gamma, U, V)
-  //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
   static const uint8_t SUITE  = 0x04;
   static const uint8_t TWO    = 0x02;
   uint8_t cp_string[SHA512_DIGEST_LENGTH] = {0};
