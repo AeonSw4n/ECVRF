@@ -151,6 +151,78 @@ static unsigned int fe_ispositive(const fe h)
   return !(unsigned int) ((uint8_t)(h0) & 1);
 }
 
+// this will be changed when dif bases added
+static void fe_mul121666(fe h, fe f)
+{
+    int32_t f0 = f[0];
+    int32_t f1 = f[1];
+    int32_t f2 = f[2];
+    int32_t f3 = f[3];
+    int32_t f4 = f[4];
+    int32_t f5 = f[5];
+    int32_t f6 = f[6];
+    int32_t f7 = f[7];
+    int32_t f8 = f[8];
+    int32_t f9 = f[9];
+    int64_t h0 = f0 * (int64_t) 121666;
+    int64_t h1 = f1 * (int64_t) 121666;
+    int64_t h2 = f2 * (int64_t) 121666;
+    int64_t h3 = f3 * (int64_t) 121666;
+    int64_t h4 = f4 * (int64_t) 121666;
+    int64_t h5 = f5 * (int64_t) 121666;
+    int64_t h6 = f6 * (int64_t) 121666;
+    int64_t h7 = f7 * (int64_t) 121666;
+    int64_t h8 = f8 * (int64_t) 121666;
+    int64_t h9 = f9 * (int64_t) 121666;
+    int64_t carry0;
+    int64_t carry1;
+    int64_t carry2;
+    int64_t carry3;
+    int64_t carry4;
+    int64_t carry5;
+    int64_t carry6;
+    int64_t carry7;
+    int64_t carry8;
+    int64_t carry9;
+
+    carry9 = h9 + (1 << 24); h0 += (carry9 >> 25) * 19; h9 -= carry9 & kTop39Bits;
+    carry1 = h1 + (1 << 24); h2 += carry1 >> 25; h1 -= carry1 & kTop39Bits;
+    carry3 = h3 + (1 << 24); h4 += carry3 >> 25; h3 -= carry3 & kTop39Bits;
+    carry5 = h5 + (1 << 24); h6 += carry5 >> 25; h5 -= carry5 & kTop39Bits;
+    carry7 = h7 + (1 << 24); h8 += carry7 >> 25; h7 -= carry7 & kTop39Bits;
+
+    carry0 = h0 + (1 << 25); h1 += carry0 >> 26; h0 -= carry0 & kTop38Bits;
+    carry2 = h2 + (1 << 25); h3 += carry2 >> 26; h2 -= carry2 & kTop38Bits;
+    carry4 = h4 + (1 << 25); h5 += carry4 >> 26; h4 -= carry4 & kTop38Bits;
+    carry6 = h6 + (1 << 25); h7 += carry6 >> 26; h6 -= carry6 & kTop38Bits;
+    carry8 = h8 + (1 << 25); h9 += carry8 >> 26; h8 -= carry8 & kTop38Bits;
+
+    h[0] = (int32_t)h0;
+    h[1] = (int32_t)h1;
+    h[2] = (int32_t)h2;
+    h[3] = (int32_t)h3;
+    h[4] = (int32_t)h4;
+    h[5] = (int32_t)h5;
+    h[6] = (int32_t)h6;
+    h[7] = (int32_t)h7;
+    h[8] = (int32_t)h8;
+    h[9] = (int32_t)h9;
+}
+
+// this will be changed when dif bases added
+static void fe_cswap(fe f, fe g, unsigned int b)
+{
+    size_t i;
+
+    b = 0-b;
+    for (i = 0; i < 10; i++) {
+        int32_t x = f[i] ^ g[i];
+        x &= b;
+        f[i] ^= x;
+        g[i] ^= x;
+    }
+}
+
 /**
  * Compute the Legendre symbol e of w as
  * w ** ((p-1)/2) = w ** (2 ** 254 - 10) with the exponent as
@@ -271,181 +343,6 @@ static void fe_fraction_sqrt_and_legendre(fe sqrt_helper, fe e, const fe w)
 }
 
 /**
- * Implements elligator2 on curve 25519
- * Point returned in projective system through out_point and in
- * bytes format through out_point_bytes. Point is derived from
- * field element r.
- *
- * Cost per bit of r: approximately 2S + 0.2M (S = fe squaring, M = fe multiplication)
- * (more precisely, 514 squarings and 47 multplications, with fe_inverse and fe_fraction_sqrt_and_legendre taking up most of the time)
- */
-static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32],
-                                                    const fe r)
-{
-   /*
-    * Variables:
-    * A           - Montgomery constant A
-    * A_cubed     - A ** 3
-    * e           - Legendre symbol
-    * b           - Conditional value
-    * one         - 1 constant
-    * sqrt2       - Square root of u=2
-    * sqrtAp2     - Square root of A+2
-    * v, v2       - Montgomery y-coodrinates
-    * w, w2       - Square of v
-    * y           - Edwards y-coodrinate
-    * p1p1        - Edwards point, completed system
-    * p2          - Edwards point, projective system
-    */
-    fe A, A_cubed, e, one, sqrt2, sqrtAp2, v, v2, w, w2, y;
-    fe z0, z1, t0, t1, t2, t3, recip, recip2, recip3, recip9, recip21, minvert;
-    unsigned int b;
-    ge_p1p1 p1p1;
-    ge_p2 p2;
-
-    fe_A(A), fe_A_cubed(A_cubed), fe_1(one), fe_sqrt_2(sqrt2), fe_sqrt_A_plus_2(sqrtAp2);
-
-    /* recip = 1 + 2 * (r ** 2) */
-    fe_sq2(recip, r);
-    fe_add(recip, one, recip);
-
-    // recip2 = recip ** 2
-    fe_sq(recip2, recip);
-
-    // z0 = [A * recip ** 2] - [(recip - 1) * A ** 3]
-    // z1 = z0
-    fe_sub(z0, recip, one); // LC: can we eliminate this subtraction by moving the next line to before fe_add 7 lines above?
-    fe_mul(z0, z0, A_cubed);
-    fe_mul(z1, recip2, A);
-    fe_sub(z0, z1, z0); // LC: why not put this into z1 directly, eliminate the copy line below, and then use z1 as instead of z0 as the argument 13 lines below, i.e., change fe_mul(z0, z0, recip21) to fe_mul(z0, z1, recip21)
-    fe_copy(z1, z0);
-
-    // recip3 = recip ** 3
-    // recip9 = recip ** 9
-    // recip21 = recip ** 21
-    fe_mul(recip3, recip2, recip);
-    fe_sq(recip9, recip3);
-    fe_mul(recip9, recip9, recip3);
-    fe_sq(recip21, recip9);
-    fe_mul(recip21, recip21, recip3);
-
-    // z0 = z0 * recip ** 21
-    fe_mul(z0, z0, recip21);
-
-    // (v, e) = (sqrt(z0), legendre(z0))
-    fe_fraction_sqrt_and_legendre(v, e, z0);
-    
-    // LC: v = v * z1 * recip ** 9
-    fe_mul(v, v, z1);
-    fe_mul(v, v, recip9);
-
-    // e ==  1:  (t2, z0) = (-A, z1)
-    // e == -1:  (t2, z0) = (A(1 - recip), (2 * r ** 2) * z1)
-    b = ((e[0] + 1) & 2) >> 1;
-    fe_copy(t3, A);
-    fe_neg(t3, t3);
-    fe_sub(t2, one, recip);
-    fe_mul(t2, A, t2);
-    fe_sq2(z0, r);
-    fe_mul(z0, z0, z1);
-    fe_cmov(t2, t3, b);
-    fe_cmov(z0, z1, b);
-
-    // e ==  1:  v = v
-    // e == -1:  v = v * r * sqrt(2)
-    fe_mul(sqrt2, sqrt2, r);
-    fe_cmov(sqrt2, one, b);
-    fe_mul(v, v, sqrt2);
-
-    // (recip ** 3 * v ** 2) == z0:  v = v
-    // (recip ** 3 * v ** 2) != z0:  v = v * sqrt(-1)
-    fe_sq(v2, v);
-    fe_mul(v2, v2, recip3);
-    b = fe_ispositive(v2) ^ fe_ispositive(z0);
-    fe_cmov(one, sqrtm1, b);
-    fe_mul(v, v, one);
-
-    // (x, y) = (|X/Z|, Y/T) is the +/- Edwards curve point before cofactor clearing
-    // x = (sqrt(A + 2) * t2) / (v * recip)
-    // y = (t2 - recip) / (t2 + recip)
-    fe_mul(sqrtAp2, sqrtAp2, t2);
-    fe_mul(v, v, recip);
-    fe_sub(p1p1.Y, t2, recip);
-    fe_add(p1p1.T, t2, recip);
-    fe_copy(p1p1.X, sqrtAp2);
-    fe_copy(p1p1.Z, v);
-
-    // out_point = 8(x, y)
-    ge_p1p1_to_p2(&p2, &p1p1);
-    ge_p2_dbl(&p1p1, &p2);
-    ge_p1p1_to_p2(&p2, &p1p1);
-    ge_p2_dbl(&p1p1, &p2);
-    ge_p1p1_to_p2(&p2, &p1p1);
-    ge_p2_dbl(&p1p1, &p2);
-    ge_p1p1_to_p3(out_point, &p1p1);
-
-    // minvert = 1 / (v * Z * (Z - Y))
-    fe_copy(minvert, v);
-    fe_mul(minvert, minvert, out_point->Z);
-    fe_copy(t0, out_point->Z);
-    fe_sub(t0, t0, out_point->Y);
-    fe_mul(minvert, minvert, t0);
-    fe_invert(minvert, minvert);
-
-    // fix sign of 8(x, y) if (x, y) was negative
-    fe_mul(t1, minvert, t0);
-    fe_mul(t2, t1, out_point->Z);
-    fe_mul(t2, t2, sqrtAp2);
-    fe_neg(t3, out_point->X);
-    fe_neg(t0, out_point->T);
-    b = !fe_ispositive(t2);
-    fe_cmov(out_point->X, t3, b);
-    fe_cmov(out_point->T, t0, b);
-    fe_mul(t2, t1, v);
-    fe_mul(t3, t2, out_point->Y);
-    fe_mul(t2, t2, out_point->X);
-    fe_tobytes(out_point_bytes, t3);
-    out_point_bytes[31] ^= fe_isnegative(t2) << 7;
-}
-
-/**
- * Controler for ECVRF_hash_to_curve_elligator2_25519
- * Derives input field element for elligator2 from alpha and the public key
- */
-static void ECVRF_alpha_to_curve(ge_p3 *out_point, uint8_t out_point_bytes[32],
-                  const uint8_t public_key[32], const uint8_t *alpha, size_t alpha_len)
-{
-
-  static const uint8_t SUITE  = 0x04;
-  static const uint8_t ONE    = 0x01;
-
-  // hash(suite || one || pk || alpha)
-  uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
-  SHA512_CTX hash_ctx;
-  SHA512_Init(&hash_ctx);
-  SHA512_Update(&hash_ctx, &SUITE, 1);
-  SHA512_Update(&hash_ctx, &ONE, 1);
-  SHA512_Update(&hash_ctx, public_key, 32);
-  SHA512_Update(&hash_ctx, alpha, alpha_len);
-  SHA512_Final(hash, &hash_ctx);
-
-  // take first 32 bytes of the hash
-  uint8_t truncatedHash[32];
-  memcpy(truncatedHash, hash, 32);
-
-  // take highest order bit of truncated hash
-  // clear the bit in the source
-  truncatedHash[31] &= 0x7f;
-
-  // field element from the hash
-  fe r;
-  fe_frombytes(r, truncatedHash);
-
-  // elligator2
-  ECVRF_hash_to_curve_elligator2_25519(out_point, out_point_bytes, r);
-}
-
-/**
  * Conditional swap.
  * (t0, t1) := (t0, t1)  if b == 0
  * (t0, t1) := (t1, t0)  if b == 1
@@ -461,76 +358,12 @@ static void cswap(uint8_t *t0, uint8_t *t1, unsigned int b)
   *t1 ^= x;
 }
 
-// this will be changed when dif bases added
-static void fe_mul121666(fe h, fe f)
+static void ge_p2_to_p3(ge_p3 *r, const ge_p2 *p)
 {
-    int32_t f0 = f[0];
-    int32_t f1 = f[1];
-    int32_t f2 = f[2];
-    int32_t f3 = f[3];
-    int32_t f4 = f[4];
-    int32_t f5 = f[5];
-    int32_t f6 = f[6];
-    int32_t f7 = f[7];
-    int32_t f8 = f[8];
-    int32_t f9 = f[9];
-    int64_t h0 = f0 * (int64_t) 121666;
-    int64_t h1 = f1 * (int64_t) 121666;
-    int64_t h2 = f2 * (int64_t) 121666;
-    int64_t h3 = f3 * (int64_t) 121666;
-    int64_t h4 = f4 * (int64_t) 121666;
-    int64_t h5 = f5 * (int64_t) 121666;
-    int64_t h6 = f6 * (int64_t) 121666;
-    int64_t h7 = f7 * (int64_t) 121666;
-    int64_t h8 = f8 * (int64_t) 121666;
-    int64_t h9 = f9 * (int64_t) 121666;
-    int64_t carry0;
-    int64_t carry1;
-    int64_t carry2;
-    int64_t carry3;
-    int64_t carry4;
-    int64_t carry5;
-    int64_t carry6;
-    int64_t carry7;
-    int64_t carry8;
-    int64_t carry9;
-
-    carry9 = h9 + (1 << 24); h0 += (carry9 >> 25) * 19; h9 -= carry9 & kTop39Bits;
-    carry1 = h1 + (1 << 24); h2 += carry1 >> 25; h1 -= carry1 & kTop39Bits;
-    carry3 = h3 + (1 << 24); h4 += carry3 >> 25; h3 -= carry3 & kTop39Bits;
-    carry5 = h5 + (1 << 24); h6 += carry5 >> 25; h5 -= carry5 & kTop39Bits;
-    carry7 = h7 + (1 << 24); h8 += carry7 >> 25; h7 -= carry7 & kTop39Bits;
-
-    carry0 = h0 + (1 << 25); h1 += carry0 >> 26; h0 -= carry0 & kTop38Bits;
-    carry2 = h2 + (1 << 25); h3 += carry2 >> 26; h2 -= carry2 & kTop38Bits;
-    carry4 = h4 + (1 << 25); h5 += carry4 >> 26; h4 -= carry4 & kTop38Bits;
-    carry6 = h6 + (1 << 25); h7 += carry6 >> 26; h6 -= carry6 & kTop38Bits;
-    carry8 = h8 + (1 << 25); h9 += carry8 >> 26; h8 -= carry8 & kTop38Bits;
-
-    h[0] = (int32_t)h0;
-    h[1] = (int32_t)h1;
-    h[2] = (int32_t)h2;
-    h[3] = (int32_t)h3;
-    h[4] = (int32_t)h4;
-    h[5] = (int32_t)h5;
-    h[6] = (int32_t)h6;
-    h[7] = (int32_t)h7;
-    h[8] = (int32_t)h8;
-    h[9] = (int32_t)h9;
-}
-
-// this will be changed when dif bases added
-static void fe_cswap(fe f, fe g, unsigned int b)
-{
-    size_t i;
-
-    b = 0-b;
-    for (i = 0; i < 10; i++) {
-        int32_t x = f[i] ^ g[i];
-        x &= b;
-        f[i] ^= x;
-        g[i] ^= x;
-    }
+    fe_mul(r->X, p->X, p->Z);
+    fe_mul(r->Y, p->Y, p->Z);
+    fe_sq(r->Z, p->Z);
+    fe_mul(r->T, r->X, r->Y);
 }
 
 /* r = p */
@@ -572,35 +405,10 @@ static void ge_p3_cswap(ge_p3 *p, ge_p3 *q, unsigned int b)
   fe_cswap(p->T, q->T, b);
 }
 
-/**
- * dedicated / dual Edwards addition
- * r = p + q
- * (X3:Y3:Z3:T3) = (X1:Y1:Z1:T1) + (X2:Y2:Z2:T2)
- *
- * Cost: 8M total
- */
-static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
+static void ge_p3_neg(ge_p3 *r, const ge_p3 *p)
 {
-    fe A, B, C, D, E, F, G, H;
-
-    fe_sub(A, p->Y, p->X);      //  1.  A = (Y1 - X1)
-    fe_add(B, q->Y, q->X);      //  2.  B = (Y2 + X2)
-    fe_mul(A, A, B);            //  3.  A = (Y1 - X1) * (Y2 + X2)
-    fe_add(B, p->Y, p->X);      //  4.  B = (Y1 + X1)
-    fe_sub(C, q->Y, q->X);      //  5.  C = (Y2 - X2)
-    fe_mul(B, B, C);            //  6.  B = (Y1 + X1) * (Y2 - X2)
-    fe_add(C, p->Z, p->Z);      //  7.  C = 2 Z1
-    fe_mul(C, C, q->T);         //  8.  C = 2 Z1 * T2
-    fe_add(D, p->T, p->T);      //  9.  D = 2 T1
-    fe_mul(D, D, q->Z);         // 10.  D = 2 T1 * Z2
-    fe_add(E, D, C);            // 11.  E = D + C
-    fe_sub(F, B, A);            // 12.  F = B - A
-    fe_add(G, B, A);            // 13.  G = B + A
-    fe_sub(H, D, C);            // 14.  H = D - C
-    fe_mul(r->X, E, F);         // 15.  X3 = E * F
-    fe_mul(r->Y, G, H);         // 16.  Y3 = G * H
-    fe_mul(r->T, E, H);         // 17.  T3 = E * H
-    fe_mul(r->Z, F, G);         // 18.  Z3 = F * G
+  fe_neg(r->X, p->X);
+  fe_neg(r->T, p->T);
 }
 
 /**
@@ -694,6 +502,77 @@ static void ge_p3_merge_two_tobytes(uint8_t out1[32], uint8_t out2[32],
   out2[31] ^= fe_isnegative(x) << 7;
 }
 
+static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_t u2[32], uint8_t v2[32],
+                                              const ge_p3 *p, const ge_p3 *q)
+{
+    fe sqrtnAp2, up, uq, t0, t1, t2, t3, t4, t5;
+    fe_sqrt_neg_A_plus_2(sqrtnAp2);
+    fe_sub(t0, p->Z, p->Y);
+    fe_sub(t1, q->Z, q->Y);
+
+    fe_mul(t2, t0, t1);
+    fe_mul(t3, p->X, q->X);
+    fe_mul(t4, t2, t3);
+    fe_invert(t4, t4);
+
+    fe_add(t5, p->Z, p->Y);
+    fe_mul(t5, t5, t4);
+    fe_mul(t5, t5, t3);
+    fe_mul(up, t5, t1);
+    fe_tobytes(u1, up);
+
+    fe_add(t5, q->Z, q->Y);
+    fe_mul(t5, t5, t4);
+    fe_mul(t5, t5, t3);
+    fe_mul(uq, t5, t0);
+    fe_tobytes(u2, uq);
+
+    fe_mul(t5, up, t4);
+    fe_mul(t5, t5, t2);
+    fe_mul(t5, t5, q->X);
+    fe_mul(t5, t5, p->Z);
+    fe_mul(t5, t5, sqrtnAp2);
+    fe_tobytes(v1, t5);
+
+    fe_mul(t5, uq, t4);
+    fe_mul(t5, t5, t2);
+    fe_mul(t5, t5, p->X);
+    fe_mul(t5, t5, q->Z);
+    fe_mul(t5, t5, sqrtnAp2);
+    fe_tobytes(v2, t5);
+}
+
+/**
+ * dedicated / dual Edwards addition
+ * r = p + q
+ * (X3:Y3:Z3:T3) = (X1:Y1:Z1:T1) + (X2:Y2:Z2:T2)
+ *
+ * Cost: 8M total
+ */
+static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
+{
+    fe A, B, C, D, E, F, G, H;
+
+    fe_sub(A, p->Y, p->X);      //  1.  A = (Y1 - X1)
+    fe_add(B, q->Y, q->X);      //  2.  B = (Y2 + X2)
+    fe_mul(A, A, B);            //  3.  A = (Y1 - X1) * (Y2 + X2)
+    fe_add(B, p->Y, p->X);      //  4.  B = (Y1 + X1)
+    fe_sub(C, q->Y, q->X);      //  5.  C = (Y2 - X2)
+    fe_mul(B, B, C);            //  6.  B = (Y1 + X1) * (Y2 - X2)
+    fe_add(C, p->Z, p->Z);      //  7.  C = 2 Z1
+    fe_mul(C, C, q->T);         //  8.  C = 2 Z1 * T2
+    fe_add(D, p->T, p->T);      //  9.  D = 2 T1
+    fe_mul(D, D, q->Z);         // 10.  D = 2 T1 * Z2
+    fe_add(E, D, C);            // 11.  E = D + C
+    fe_sub(F, B, A);            // 12.  F = B - A
+    fe_add(G, B, A);            // 13.  G = B + A
+    fe_sub(H, D, C);            // 14.  H = D - C
+    fe_mul(r->X, E, F);         // 15.  X3 = E * F
+    fe_mul(r->Y, G, H);         // 16.  Y3 = G * H
+    fe_mul(r->T, E, H);         // 17.  T3 = E * H
+    fe_mul(r->Z, F, G);         // 18.  Z3 = F * G
+}
+
 /**
  * Calculate (out1, out2) = (scalar1 * H, scalar2 * H) in constant time
  *
@@ -750,56 +629,92 @@ static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32],
   ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
 }
 
-static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe out_z3[32],
-                                       const uint8_t scalar[32], const uint8_t in_x[32])
+static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe U, const fe V, const fe Z)
 {
-    fe x1, x2, z2, x3, z3, tmp0, tmp1;
+    fe t0, sqrtnAp2;
+    ge_p1p1 p;
+    fe_sqrt_neg_A_plus_2(sqrtnAp2);
+    fe_add(t0, U, Z);
+    fe_mul(p.X, U, sqrtnAp2);
+    fe_copy(p.Z, V);
+    fe_sub(p.Y, U, Z);
+    fe_add(p.T, U, Z);
+    ge_p1p1_to_p3(r, &p);
+}
+
+static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], const uint8_t vb[32],
+                                const fe U1, const fe Z1, const fe U2, const fe Z2)
+{
+    fe u, v, AA, T1, T2, T3, T4;
+    fe_frombytes(u, ub);
+    fe_frombytes(v, vb);
+    fe_2A(AA);
+    fe_mul(T1, u, Z1);  //  1.  T1 <--  u * Z1
+    fe_add(T2, U1, T1); //  2.  T2 <-- U1 + T1
+    fe_sub(T3, U1, T1); //  3.  T3 <-- U1 - T1
+    fe_mul(T3, T3, T3); //  4.  T3 <-- T3 * T3
+    fe_mul(T3, T3, U2); //  5.  T3 <-- T3 * U2
+    fe_mul(T1, AA, Z1); //  6.  T1 <-- 2A * Z1
+    fe_add(T2, T2, T1); //  7.  T2 <-- T2 + T1
+    fe_mul(T4, u, U1);  //  8.  T4 <--  u * U1
+    fe_add(T4, T4, Z1); //  9.  T4 <-- T4 + Z1
+    fe_mul(T2, T2, T4); // 10.  T2 <-- T2 * T4
+    fe_mul(T1, T1, Z1); // 11.  T1 <-- T1 * Z1
+    fe_sub(T2, T2, T1); // 12.  T2 <-- T2 - T1
+    fe_mul(T2, T2, Z2); // 13.  T2 <-- T2 * Z2
+    fe_sub(V, T2, T3);  // 14.   V <-- T2 - T3
+    fe_add(T1, v, v);   // 15.  T1 <--  2 * v
+    fe_mul(T1, T1, Z1); // 16.  T1 <-- T1 * Z1
+    fe_mul(T1, T1, Z2); // 17.  T1 <-- T1 * Z2
+    fe_mul(U, T1, U1);  // 18.   U <-- T1 * U1
+    fe_mul(Z, T1, Z1);  // 19.   Z <-- T1 * Z1
+}
+
+static void montgomery_ladder(fe out_u2[32], fe out_z2[32], fe out_u3[32], fe out_z3[32],
+                                       const uint8_t scalar[32], size_t scalar_len, const uint8_t in_u[32])
+{
+    fe u1, u2, z2, u3, z3, tmp0, tmp1;
     uint8_t e[32];
     unsigned swap = 0;
     int pos;
-
-    memcpy(e, scalar, 32);
-    //e[0] &= 248;
-    //e[31] &= 127;
-    //e[31] |= 64;
-    fe_frombytes(x1, in_x);
-    fe_1(x2);
+    memcpy(e, scalar, scalar_len);
+    fe_frombytes(u1, in_u);
+    fe_1(u2);
     fe_0(z2);
-    fe_copy(x3, x1);
+    fe_copy(u3, u1);
     fe_1(z3);
 
-    for (pos = 254; pos >= 0; --pos) {
+    for (pos = 8*scalar_len-1; pos >= 0; --pos) {
         unsigned b = 1 & (e[pos / 8] >> (pos & 7));
-        //printf("%d", b);
         swap ^= b;
-        fe_cswap(x2, x3, swap);
+        fe_cswap(u2, u3, swap);
         fe_cswap(z2, z3, swap);
         swap = b;
-        fe_sub(tmp0, x3, z3);
-        fe_sub(tmp1, x2, z2);
-        fe_add(x2, x2, z2);
-        fe_add(z2, x3, z3);
-        fe_mul(z3, tmp0, x2);
+        fe_sub(tmp0, u3, z3);
+        fe_sub(tmp1, u2, z2);
+        fe_add(u2, u2, z2);
+        fe_add(z2, u3, z3);
+        fe_mul(z3, tmp0, u2);
         fe_mul(z2, z2, tmp1);
         fe_sq(tmp0, tmp1);
-        fe_sq(tmp1, x2);
-        fe_add(x3, z3, z2);
+        fe_sq(tmp1, u2);
+        fe_add(u3, z3, z2);
         fe_sub(z2, z3, z2);
-        fe_mul(x2, tmp1, tmp0);
+        fe_mul(u2, tmp1, tmp0);
         fe_sub(tmp1, tmp1, tmp0);
         fe_sq(z2, z2);
         fe_mul121666(z3, tmp1);
-        fe_sq(x3, x3);
+        fe_sq(u3, u3);
         fe_add(tmp0, tmp0, z3);
-        fe_mul(z3, x1, z2);
+        fe_mul(z3, u1, z2);
         fe_mul(z2, tmp1, tmp0);
     }
-    fe_cswap(x2, x3, swap);
+    fe_cswap(u2, u3, swap);
     fe_cswap(z2, z3, swap);
 
-    fe_copy(out_x2, x2);
+    fe_copy(out_u2, u2);
     fe_copy(out_z2, z2);
-    fe_copy(out_x3, x3);
+    fe_copy(out_u3, u3);
     fe_copy(out_z3, z3);
 
 
@@ -807,93 +722,202 @@ static void montgomery_ladder(fe out_x2[32], fe out_z2[32], fe out_x3[32], fe ou
     OPENSSL_cleanse(e, sizeof(e));
 }
 
-static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_t u2[32], uint8_t v2[32],
-                                              const ge_p3 *p, const ge_p3 *q)
+static void montgomery_ladder_scalar_mult(ge_p3 *r, const uint8_t *scalar, const size_t scalar_len,
+                                                  const uint8_t u[32], const uint8_t v[32])
 {
-    fe nAp2, up, uq, t0, t1, t2, t3, t4, t5;
-    fe_sqrt_neg_A_plus_2(nAp2);
-    fe_sub(t0, p->Z, p->Y);
-    fe_sub(t1, q->Z, q->Y);
-
-    fe_mul(t2, t0, t1);
-    fe_mul(t3, p->X, q->X);
-    fe_mul(t4, t2, t3);
-    fe_invert(t4, t4);
-
-    fe_add(t5, p->Z, p->Y);
-    fe_mul(t5, t5, t4);
-    fe_mul(t5, t5, t3);
-    fe_mul(up, t5, t1);
-    fe_tobytes(u1, up);
-
-    fe_add(t5, q->Z, q->Y);
-    fe_mul(t5, t5, t4);
-    fe_mul(t5, t5, t3);
-    fe_mul(uq, t5, t0);
-    fe_tobytes(u2, uq);
-
-    fe_mul(t5, up, t4);
-    fe_mul(t5, t5, t2);
-    fe_mul(t5, t5, q->X);
-    fe_mul(t5, t5, p->Z);
-    fe_mul(t5, t5, nAp2);
-    fe_tobytes(v1, t5);
-
-    fe_mul(t5, uq, t4);
-    fe_mul(t5, t5, t2);
-    fe_mul(t5, t5, p->X);
-    fe_mul(t5, t5, q->Z);
-    fe_mul(t5, t5, nAp2);
-    fe_tobytes(v2, t5);
+  fe u1, z1, u2, z2;
+  fe u_rec, v_rec, z_rec;
+  montgomery_ladder(u1, z1, u2, z2, scalar, scalar_len, u);
+  montgomery_recover_point(u_rec, v_rec, z_rec, u, v, u1, z1, u2, z2);
+  montgomery_p2_to_ge_p3(r, u_rec, v_rec, z_rec);
 }
 
-static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe X, const fe Y, const fe Z)
+static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, const ge_p3 *q,
+                                                  const uint8_t *s1, const size_t s1_len,
+                                                  const uint8_t *s2, const size_t s2_len)
 {
-    fe t0, nAp2;
-    ge_p1p1 p;
-    fe_sqrt_neg_A_plus_2(nAp2);
-    fe_add(t0, X, Z);
-    fe_mul(p.X, X, nAp2);
-    fe_copy(p.Z, Y);
-    fe_sub(p.Y, X, Z);
-    fe_add(p.T, X, Z);
-    ge_p1p1_to_p3(r, &p);
+  uint8_t p_u[32], p_v[32], q_u[32], q_v[32];
+  ge_cached s2_q_cached;
+  ge_p1p1 r_p1p1;
+  ge_p3 s1_p, s2_q;
+  ge_p3_merge_two_to_montgomery(p_u, p_v, q_u, q_v, p, q);
+  montgomery_ladder_scalar_mult(&s1_p, s1, s1_len, p_u, p_v);
+  montgomery_ladder_scalar_mult(&s2_q, s2, s2_len, q_u, q_v);
+  ge_p3_to_cached(&s2_q_cached, &s2_q);
+  ge_sub(&r_p1p1, &s1_p, &s2_q_cached);
+  ge_p1p1_to_p3(r, &r_p1p1);
 }
 
-static void montgomery_recover_point(fe X, fe Y, fe Z, const uint8_t xb[32], const uint8_t yb[32],
-                                const fe X1, const fe Z1, const fe X2, const fe Z2)
+/**
+ * Implements elligator2 on curve 25519
+ * Point returned in projective system through out_point and in
+ * bytes format through out_point_bytes. Point is derived from
+ * field element r.
+ *
+ * Variables:
+ * A           - Montgomery constant A
+ * A_cubed     - A ** 3
+ * e           - Legendre symbol
+ * b           - Conditional value
+ * one         - 1 constant
+ * sqrt2       - Square root of u=2
+ * sqrtnAp2    - Square root of A+2
+ * v, v2       - Montgomery y-coodrinates
+ * w, w2       - Square of v
+ * y           - Edwards y-coodrinate
+ * p1p1        - Edwards point, completed system
+ * p2          - Edwards point, projective system
+ *
+ * Cost per bit of r: approximately 2S + 0.2M (S = fe squaring, M = fe multiplication)
+ * (more precisely, 514 squarings and 47 multplications, with fe_inverse and fe_fraction_sqrt_and_legendre taking up most of the time) */
+static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32], const fe r)
 {
-    fe x, y, AA, T1, T2, T3, T4;
-    fe_frombytes(x, xb);
-    fe_frombytes(y, yb);
-    fe_2A(AA);
-    fe_mul(T1, x, Z1);  //  1.  T1 <--  x * Z1
-    fe_add(T2, X1, T1); //  2.  T2 <-- X1 + T1
-    fe_sub(T3, X1, T1); //  3.  T3 <-- X1 - T1
-    fe_mul(T3, T3, T3); //  4.  T3 <-- T3 * T3
-    fe_mul(T3, T3, X2); //  5.  T3 <-- T3 * X2
-    fe_mul(T1, AA, Z1); //  6.  T1 <-- 2A * Z1
-    fe_add(T2, T2, T1); //  7.  T2 <-- T2 + T1
-    fe_mul(T4, x, X1);  //  8.  T4 <--  x * X1
-    fe_add(T4, T4, Z1); //  9.  T4 <-- T4 + Z1
-    fe_mul(T2, T2, T4); // 10.  T2 <-- T2 * T4
-    fe_mul(T1, T1, Z1); // 11.  T1 <-- T1 * Z1
-    fe_sub(T2, T2, T1); // 12.  T2 <-- T2 - T1
-    fe_mul(T2, T2, Z2); // 13.  T2 <-- T2 * Z2
-    fe_sub(Y, T2, T3);  // 14.   Y <-- T2 - T3
-    fe_add(T1, y, y);   // 15.  T1 <--  2 * y
-    fe_mul(T1, T1, Z1); // 16.  T1 <-- T1 * Z1
-    fe_mul(T1, T1, Z2); // 17.  T1 <-- T1 * Z2
-    fe_mul(X, T1, X1);  // 18.   X <-- T1 * X1
-    fe_mul(Z, T1, Z1);  // 19.   Z <-- T1 * Z1
+    fe A, A_cubed, e, one, sqrt2, sqrtnAp2, v, v2, w, w2, y;
+    fe z0, z1, t0, t1, t2, t3, recip, recip2, recip3, recip9, recip21, minvert;
+    unsigned int b;
+    ge_p1p1 p1p1;
+    ge_p2 p2;
+
+    fe_A(A), fe_A_cubed(A_cubed), fe_1(one), fe_sqrt_2(sqrt2), fe_sqrt_neg_A_plus_2(sqrtnAp2);
+
+    /* recip = 1 + 2 * (r ** 2) */
+    fe_sq2(recip, r);
+    fe_add(recip, one, recip);
+
+    /* recip2 = recip ** 2 */
+    fe_sq(recip2, recip);
+
+    /* z0 = [(recip - 1) * A ** 3] - [A * recip ** 2] */
+    /* z1 = z0 */
+    fe_sub(z0, recip, one); /* LC: can we eliminate this subtraction by moving the next line to before fe_add 7 lines above? */
+    fe_mul(z0, z0, A_cubed);
+    fe_mul(z1, recip2, A);
+    fe_sub(z0, z0, z1); /* LC: why not put this into z1 directly, eliminate the copy line below, and then use z1 as instead of z0 as the argument 13 lines below, i.e., change fe_mul(z0, z0, recip21) to fe_mul(z0, z1, recip21. In other words, we are you creating z0 here when you don't need it -- z1 alone is sufficient? */
+    fe_copy(z1, z0);
+
+    /* recip3 = recip ** 3 */
+    /* recip9 = recip ** 9 */
+    /* recip21 = recip ** 21 */
+    fe_mul(recip3, recip2, recip);
+    fe_sq(recip9, recip3);
+    fe_mul(recip9, recip9, recip3);
+    fe_sq(recip21, recip9);
+    fe_mul(recip21, recip21, recip3);
+
+    /* z0 = z0 * recip ** 21 */
+    fe_mul(z0, z0, recip21);
+
+    /* (v, e) = (sqrt(z0), legendre(z0)) */
+    fe_fraction_sqrt_and_legendre(v, e, z0);
+    
+    /* LC: v = v * z1 * recip ** 9 */
+    fe_mul(v, v, z1);
+    fe_mul(v, v, recip9);
+
+    // e ==  1:  (t2, z0) = (-A, z1)
+    // e == -1:  (t2, z0) = (A(1 - recip), (2 * r ** 2) * z1)
+    b = ((e[0] + 1) & 2) >> 1;
+    fe_copy(t3, A);
+    fe_neg(t3, t3);
+    fe_sub(t2, one, recip);
+    fe_mul(t2, A, t2);
+    fe_sq2(z0, r);
+    fe_mul(z0, z0, z1);
+    fe_cmov(t2, t3, b);
+    fe_cmov(z0, z1, b);
+
+    // e ==  1:  v = v
+    // e == -1:  v = v * r * sqrt(2)
+    fe_mul(sqrt2, sqrt2, r);
+    fe_cmov(sqrt2, one, b);
+    fe_mul(v, v, sqrt2);
+
+    // (recip ** 3 * v ** 2) == z0:  v = v
+    // (recip ** 3 * v ** 2) != z0:  v = v * sqrt(-1)
+    fe_sq(v2, v);
+    fe_mul(v2, v2, recip3);
+    b = fe_ispositive(v2) ^ fe_ispositive(z0);
+    fe_cmov(one, sqrtm1, b);
+    fe_mul(v, v, one);
+
+    // (x, y) = (|X/Z|, Y/T) is the +/- Edwards curve point before cofactor clearing
+    // x = (sqrt(A + 2) * t2) / (v * recip)
+    // y = (t2 - recip) / (t2 + recip)
+    fe_mul(sqrtnAp2, sqrtnAp2, t2);
+    fe_mul(v, v, recip);
+    fe_sub(p1p1.Y, t2, recip);
+    fe_add(p1p1.T, t2, recip);
+    fe_copy(p1p1.X, sqrtnAp2);
+    fe_copy(p1p1.Z, v);
+
+    // out_point = 8(x, y)
+    ge_p1p1_to_p2(&p2, &p1p1);
+    ge_p2_dbl(&p1p1, &p2);
+    ge_p1p1_to_p2(&p2, &p1p1);
+    ge_p2_dbl(&p1p1, &p2);
+    ge_p1p1_to_p2(&p2, &p1p1);
+    ge_p2_dbl(&p1p1, &p2);
+    ge_p1p1_to_p3(out_point, &p1p1);
+
+    // minvert = 1 / (v * Z * (Z - Y))
+    fe_copy(minvert, v);
+    fe_mul(minvert, minvert, out_point->Z);
+    fe_copy(t0, out_point->Z);
+    fe_sub(t0, t0, out_point->Y);
+    fe_mul(minvert, minvert, t0);
+    fe_invert(minvert, minvert);
+
+    // fix sign of 8(x, y) if (x, y) was negative
+    fe_mul(t1, minvert, t0);
+    fe_mul(t2, t1, out_point->Z);
+    fe_mul(t2, t2, sqrtnAp2);
+    fe_neg(t3, out_point->X);
+    fe_neg(t0, out_point->T);
+    b = !fe_ispositive(t2);
+    fe_cmov(out_point->X, t3, b);
+    fe_cmov(out_point->T, t0, b);
+    fe_mul(t2, t1, v);
+    fe_mul(t3, t2, out_point->Y);
+    fe_mul(t2, t2, out_point->X);
+    fe_tobytes(out_point_bytes, t3);
+    out_point_bytes[31] ^= fe_isnegative(t2) << 7;
 }
 
-static void ge_p2_to_p3(ge_p3 *r, const ge_p2 *p)
+/**
+ * Controler for ECVRF_hash_to_curve_elligator2_25519
+ * Derives input field element for elligator2 from alpha and the public key
+ */
+static void ECVRF_alpha_to_curve(ge_p3 *out_point, uint8_t out_point_bytes[32],
+                  const uint8_t public_key[32], const uint8_t *alpha, size_t alpha_len)
 {
-    fe_mul(r->X, p->X, p->Z);
-    fe_mul(r->Y, p->Y, p->Z);
-    fe_sq(r->Z, p->Z);
-    fe_mul(r->T, r->X, r->Y);
+
+  static const uint8_t SUITE  = 0x04;
+  static const uint8_t ONE    = 0x01;
+
+  // hash(suite || one || pk || alpha)
+  uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
+  SHA512_CTX hash_ctx;
+  SHA512_Init(&hash_ctx);
+  SHA512_Update(&hash_ctx, &SUITE, 1);
+  SHA512_Update(&hash_ctx, &ONE, 1);
+  SHA512_Update(&hash_ctx, public_key, 32);
+  SHA512_Update(&hash_ctx, alpha, alpha_len);
+  SHA512_Final(hash, &hash_ctx);
+
+  // take first 32 bytes of the hash
+  uint8_t truncatedHash[32];
+  memcpy(truncatedHash, hash, 32);
+
+  // take highest order bit of truncated hash
+  // clear the bit in the source
+  truncatedHash[31] &= 0x7f;
+
+  // field element from the hash
+  fe r;
+  fe_frombytes(r, truncatedHash);
+
+  // elligator2
+  ECVRF_hash_to_curve_elligator2_25519(out_point, out_point_bytes, r);
 }
 
 static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_t* pi)
@@ -1042,89 +1066,75 @@ static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
   return 1;
 }
 
-static void ECVRF_prove(double *t, uint8_t* pi, const uint8_t* SK,
+static void ECVRF_prove(double *t, uint8_t pi[80], const uint8_t SK_bytes[32],
                     const uint8_t* alpha, const size_t alpha_len)
 {
 
   //1.  Use SK to derive the VRF secret scalar x and the VRF public key Y = x*B
+  SHA512_CTX hash_ctx, nonce_ctx, c_ctx;
+  const uint8_t SUITE  = 0x04;
+  const uint8_t TWO    = 0x02;
   uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
-  SHA512_CTX hash_ctx;
+  uint8_t nonce[SHA512_DIGEST_LENGTH] = {0};
+  uint8_t c_string[SHA512_DIGEST_LENGTH] = {0};
+  uint8_t Y_bytes[32], H_bytes[32], G_bytes[32], kB_bytes[32], kH_bytes[32];
+  uint8_t c[32], s[32], truncatedHash[32];
+  ge_p3 Y, H;
+
   SHA512_Init(&hash_ctx);
-  SHA512_Update(&hash_ctx, SK, 32);
+  SHA512_Update(&hash_ctx, SK_bytes, 32);
   SHA512_Final(hash, &hash_ctx);
 
-  by truncatedHash;
   memcpy(truncatedHash, hash, 32);
 
   truncatedHash[0]  &= 0xF8;
   truncatedHash[31] &= 0x7F;
   truncatedHash[31] |= 0x40;
 
-  ge_p3 p3;
-  by y;
-  ge_scalarmult_base(&p3, truncatedHash);
-  ge_p3_tobytes(y, &p3);
+  ge_scalarmult_base(&Y, truncatedHash);
+  ge_p3_tobytes(Y_bytes, &Y);
 
+  ECVRF_alpha_to_curve(&H, H_bytes, Y_bytes, alpha, alpha_len);
 
-  //2.  H = ECVRF_hash_to_curve(suite_string, Y, alpha_string)
-  //3.  h_string = point_to_string(H)
-  ge_p3 H;
-  by H_string;
-  by mUb;
-  ECVRF_alpha_to_curve(&H, H_string, y, alpha, alpha_len);
-
-
-  //4.  gamma = x*H
-
-  //5.  k = nonce = ECVRF_nonce_generation(SK, h_string)
-  by kB, kH;
-  uint8_t nonce[SHA512_DIGEST_LENGTH] = {0};
-  SHA512_CTX nonce_ctx;
   SHA512_Init(&nonce_ctx);
   SHA512_Update(&nonce_ctx, hash + 32, 32);
-  SHA512_Update(&nonce_ctx, H_string, 32);
+  SHA512_Update(&nonce_ctx, H_bytes, 32);
   SHA512_Final(nonce, &nonce_ctx);
 
 
   x25519_sc_reduce(nonce);
-  ge_scalarmult_base(&p3, nonce);
-  ge_p3_tobytes(kB, &p3);
+  ge_scalarmult_base(&Y, nonce);
+  ge_p3_tobytes(kB_bytes, &Y);
 
-  by gamma;
   *t = (double)clock();
-  double_scalar_fixed_point_mult(kH, gamma, &H, nonce, truncatedHash);
+  double_scalar_fixed_point_mult(kH_bytes, G_bytes, &H, nonce, truncatedHash);
   *t = (double)clock()-(*t);
   //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
-  static const uint8_t SUITE  = 0x04;
-  static const uint8_t TWO    = 0x02;
-  uint8_t c_string[SHA512_DIGEST_LENGTH] = {0};
-  SHA512_CTX c_ctx;
+
   SHA512_Init(&c_ctx);
   SHA512_Update(&c_ctx, &SUITE, 1);
   SHA512_Update(&c_ctx, &TWO, 1);
-  SHA512_Update(&c_ctx, H_string, 32);
-  SHA512_Update(&c_ctx, gamma, 32);
-  SHA512_Update(&c_ctx, kB, 32);
-  SHA512_Update(&c_ctx, kH, 32);
+  SHA512_Update(&c_ctx, H_bytes, 32);
+  SHA512_Update(&c_ctx, G_bytes, 32);
+  SHA512_Update(&c_ctx, kB_bytes, 32);
+  SHA512_Update(&c_ctx, kH_bytes, 32);
   SHA512_Final(c_string, &c_ctx);
 
-  uint8_t c[32];
   memset(c, 0, 32);
   memcpy(c, c_string, 16);
 
   //7.  s = (k + c*x) mod q
-  uint8_t s[32];
   sc_muladd(s, truncatedHash, c, nonce);
 
   //8.  pi_string = point_to_string(Gamma) || int_to_string(c, n) || int_to_string(s, qLen)
   //9.  Output pi_string
-  memcpy(pi, gamma, 32);
+  memcpy(pi, G_bytes, 32);
   memcpy(pi+32, c, 16);
   memcpy(pi+48, s, 32);
 
 }
 
-static int ECVRF_verify(const uint8_t *y, const uint8_t *pi,
+static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
                   const uint8_t *alpha, const size_t alpha_len)
 {
   /*
@@ -1145,44 +1155,24 @@ static int ECVRF_verify(const uint8_t *y, const uint8_t *pi,
     8.  If c and c' are equal, output ("VALID",
         ECVRF_proof_to_hash(pi_string)); else output "INVALID"
   */
-  uint8_t c[32], s[32];
-  ge_p3 G;
+  uint8_t c[32], s[32], H_bytes[32], U_bytes[32], V_bytes[32];
+  ge_p3 H, G, U, V, Y;
+  ge_p2 U_p2;
   int status = ECVRF_decode_proof(&G, c, s, pi);
 
-  ge_p3 H;
-  by H_string;
-  ECVRF_alpha_to_curve(&H, H_string, y, alpha, alpha_len);
-  ge_p2 U_p2;
-  ge_p3 U, Y;
-  ge_frombytes_vartime(&Y, y);
-  fe_neg(Y.X, Y.X);
-  fe_neg(Y.T, Y.T);
+  if(!status)
+    return 0;
+
+  ECVRF_alpha_to_curve(&H, H_bytes, Y_bytes, alpha, alpha_len);
+
+  ge_frombytes_vartime(&Y, Y_bytes);
+  ge_p3_neg(&Y, &Y);
   ge_double_scalarmult_vartime(&U_p2, c, &Y, s);
   ge_p2_to_p3(&U, &U_p2);
 
-  fe GX1, GZ1, GX2, GZ2, HX1, HZ1, HX2, HZ2;
-  by Gx, Gy, Hx, Hy;
-  ge_p3_merge_two_to_montgomery(Gx, Gy, Hx, Hy, &G, &H);
-  montgomery_ladder(GX1, GZ1, GX2, GZ2, c, Gx);
-  montgomery_ladder(HX1, HZ1, HX2, HZ2, s, Hx);
-  fe GX, GY, GZ, HX, HY, HZ;
-  montgomery_recover_point(GX, GY, GZ, Gx, Gy, GX1, GZ1, GX2, GZ2);
-  montgomery_recover_point(HX, HY, HZ, Hx, Hy, HX1, HZ1, HX2, HZ2);
+  montgomery_double_scalar_mult_difference(&V, &H, &G, s, 32, c, 16);
 
-  ge_p3 c_G, s_H;
-  montgomery_p2_to_ge_p3(&c_G, GX, GY, GZ);
-  montgomery_p2_to_ge_p3(&s_H, HX, HY, HZ);
-
-
-  ge_cached c_G_cached;
-  ge_p1p1 V_p1p1;
-  ge_p3 V;
-  ge_p3_to_cached(&c_G_cached, &c_G);
-  ge_sub(&V_p1p1, &s_H, &c_G_cached);
-  ge_p1p1_to_p3(&V, &V_p1p1);
-  by Uby, Vby;
-  ge_p3_merge_two_tobytes(Uby, Vby, &U, &V);
-
+  ge_p3_merge_two_tobytes(U_bytes, V_bytes, &U, &V);
 
   static const uint8_t SUITE  = 0x04;
   static const uint8_t TWO    = 0x02;
@@ -1191,24 +1181,15 @@ static int ECVRF_verify(const uint8_t *y, const uint8_t *pi,
   SHA512_Init(&cp_ctx);
   SHA512_Update(&cp_ctx, &SUITE, 1);
   SHA512_Update(&cp_ctx, &TWO, 1);
-  SHA512_Update(&cp_ctx, H_string, 32);
+  SHA512_Update(&cp_ctx, H_bytes, 32);
   SHA512_Update(&cp_ctx, pi, 32);
-  SHA512_Update(&cp_ctx, Uby, 32);
-  SHA512_Update(&cp_ctx, Vby, 32);
+  SHA512_Update(&cp_ctx, U_bytes, 32);
+  SHA512_Update(&cp_ctx, V_bytes, 32);
   SHA512_Final(cp_string, &cp_ctx);
 
   uint8_t cp[32];
   memset(cp, 0, 32);
   memcpy(cp, cp_string, 16);
 
-  int eq = 1;
-  int i;
-  for(i=0; i<32; i++){
-    if(c[i] != cp[i]){
-      eq = 0;
-      break;
-    }
-  }
-
-  return eq;
+  return by_cmp(c, cp);
 }
