@@ -21,6 +21,10 @@ static void fe_A(fe out)
 
 }
 
+/**
+ * Returns, via parameter out, a field element equal to
+ * 2*A, where A = 48662 is the coefficient in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
+ */
 static void fe_2A(fe out)
 {
   out[0] = 973324;
@@ -39,7 +43,7 @@ static void fe_2A(fe out)
  * Returns, via parameter out, a field element equal to
  * A^3, where A = 48662 is the coefficient in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
  */
-static void fe_A3(fe out)
+static void fe_A_cubed(fe out)
 {
   out[0] = -8127272;
   out[1] = 6246418;
@@ -57,6 +61,9 @@ static void fe_A3(fe out)
  * Returns, via parameter out, a field element equal to the
  * positive square root of A + 2 (= 486664), i.e. (A + 2)^{2^{252}-2} mod p (where p = 2^{255}-19)
  * A = 48662 is the value from the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
+ * LC: (a) how is "positive" defined and (b) are we sure (A + 2)^{2^{252}-2} mod p is positive and not negative?
+ * LC: if we are not sure about (b), just omit that part of the comment, and simply leave "positive square root" and
+ * LC: an explanation of how "positive" is defined
  */
 static void fe_sqrt_A_plus_2(fe out)
 {
@@ -72,6 +79,9 @@ static void fe_sqrt_A_plus_2(fe out)
   out[9] = 5270574;
 }
 
+/**
+ * LC: this needs a header like fe_sqrt_A_plus_2
+ */
 static void fe_sqrt_neg_A_plus_2(fe out)
 {
   out[0] = -12222970;
@@ -89,6 +99,7 @@ static void fe_sqrt_neg_A_plus_2(fe out)
 /**
  * Returns, via parameter out, a field element equal to the
  * positive square root of 2, i.e. 2^{2^{252}-2} mod p (where p = 2^{255}-19)
+ * LC: same quesiton as for fe_sqrt_A_plus_2
  */
 static void fe_sqrt_2(fe out)
 {
@@ -107,6 +118,7 @@ static void fe_sqrt_2(fe out)
 /**
  * Returns 0 if field element h is negative
  * Returns 1 if field element h is positive
+ * LC: how is positive and negative defined?
  */
 static unsigned int fe_ispositive(const fe h)
 {
@@ -144,10 +156,13 @@ static unsigned int fe_ispositive(const fe h)
  * w ** ((p-1)/2) = w ** (2 ** 254 - 10) with the exponent as
  * 2 ** 254 - 10 = (2 ** 4) * (2 ** 250 - 1) + 6.
  * We will do so using 253 squarings and 11 multiplications.
- * In the process, also compute w ** (p+3)/8 = (2 ** 252 - 2),
- * which costs us one extra multiplication.
+ * In the process, also compute sqrt_helper = w ** (p-5)/8 = (2 ** 252 - 3),
+ * which costs us one extra multiplication (this value will be useful
+ * for computing the square root of w if w is a square, or of related values
+ * if not)
+ * LC: why is this function called fe_fraction_sqrt_and_legendre -- what's the fraction here?
  */
-static void fe_fraction_sqrt_and_legendre(fe sqrt, fe e, const fe w)
+static void fe_fraction_sqrt_and_legendre(fe sqrt_helper, fe e, const fe w)
 {
   fe w_squared;
   fe l0;
@@ -242,52 +257,55 @@ static void fe_fraction_sqrt_and_legendre(fe sqrt, fe e, const fe w)
   /* l1 = l1 ** 4 = w ** (2 ** 252 - 4) */
   fe_sq(l1, l1);
   fe_sq(l1, l1);
-  fe_mul(sqrt, l1, w);
+    
+  /* sqrt_helper = w ** (2**252 - 3) */
+  fe_mul(sqrt_helper, l1, w);
 
-  //fe_copy(sqrt, l1);
 
   /* l1 = l1 ** 4 = w ** (2 ** 254 - 16) */
   fe_sq(l1, l1);
   fe_sq(l1, l1);
 
-  /* Recall l0 = w ** 6; out = w ** (2 ** 254 - 10) */
+  /* Recall l0 = w ** 6; e = w ** (2 ** 254 - 10) */
   fe_mul(e, l1, l0);
 }
 
 /**
  * Implements elligator2 on curve 25519
  * Point returned in projective system through out_point and in
- * bytes format through out_point_bytes. Point derived from
+ * bytes format through out_point_bytes. Point is derived from
  * field element r.
  *
- * Variables:
- * A           - Montgomery constant A
- * A3          - A ** 3
- * e           - Legendre symbol
- * b           - Conditional value
- * one         - 1 constant
- * sqrt2       - Square root of u=2
- * sqrtAp2     - Square root of A+2
- * v, v2       - Montgomery y-coodrinates
- * w, w2       - Square of v
- * y           - Edwards y-coodrinate
- * p1p1        - Edwards point, completed system
- * p2          - Edwards point, projective system
- *
- * Cost: 2S (exponentiations have similar cost to fe_sq per bit)
+ * Cost per bit of r: approximately 2S + 0.2M (S = fe squaring, M = fe multiplication)
+ * (more precisely, 514 squarings and 47 multplications, with fe_inverse and fe_fraction_sqrt_and_legendre taking up most of the time)
  */
 static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32],
                                                     const fe r)
 {
-    fe A, A3, e, one, sqrt2, sqrtAp2, v, v2, w, w2, y;
+   /*
+    * Variables:
+    * A           - Montgomery constant A
+    * A_cubed     - A ** 3
+    * e           - Legendre symbol
+    * b           - Conditional value
+    * one         - 1 constant
+    * sqrt2       - Square root of u=2
+    * sqrtAp2     - Square root of A+2
+    * v, v2       - Montgomery y-coodrinates
+    * w, w2       - Square of v
+    * y           - Edwards y-coodrinate
+    * p1p1        - Edwards point, completed system
+    * p2          - Edwards point, projective system
+    */
+    fe A, A_cubed, e, one, sqrt2, sqrtAp2, v, v2, w, w2, y;
     fe z0, z1, t0, t1, t2, t3, recip, recip2, recip3, recip9, recip21, minvert;
     unsigned int b;
     ge_p1p1 p1p1;
     ge_p2 p2;
 
-    fe_A(A), fe_A3(A3), fe_1(one), fe_sqrt_2(sqrt2), fe_sqrt_A_plus_2(sqrtAp2);
+    fe_A(A), fe_A_cubed(A_cubed), fe_1(one), fe_sqrt_2(sqrt2), fe_sqrt_A_plus_2(sqrtAp2);
 
-    // recip = 1 + 2 * (r ** 2)
+    /* recip = 1 + 2 * (r ** 2) */
     fe_sq2(recip, r);
     fe_add(recip, one, recip);
 
@@ -296,10 +314,10 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
 
     // z0 = [A * recip ** 2] - [(recip - 1) * A ** 3]
     // z1 = z0
-    fe_sub(z0, recip, one);
-    fe_mul(z0, z0, A3);
+    fe_sub(z0, recip, one); // LC: can we eliminate this subtraction by moving the next line to before fe_add 7 lines above?
+    fe_mul(z0, z0, A_cubed);
     fe_mul(z1, recip2, A);
-    fe_sub(z0, z1, z0); // here
+    fe_sub(z0, z1, z0); // LC: why not put this into z1 directly, eliminate the copy line below, and then use z1 as instead of z0 as the argument 13 lines below, i.e., change fe_mul(z0, z0, recip21) to fe_mul(z0, z1, recip21)
     fe_copy(z1, z0);
 
     // recip3 = recip ** 3
@@ -316,6 +334,8 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
 
     // (v, e) = (sqrt(z0), legendre(z0))
     fe_fraction_sqrt_and_legendre(v, e, z0);
+    
+    // LC: v = v * z1 * recip ** 9
     fe_mul(v, v, z1);
     fe_mul(v, v, recip9);
 
