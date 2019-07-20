@@ -139,6 +139,78 @@ static unsigned int fe_ispositive(const fe h)
   return !(unsigned int) ((uint8_t)(h0) & 1);
 }
 
+// this will be changed when dif bases added
+static void fe_mul121666(fe h, fe f)
+{
+    int32_t f0 = f[0];
+    int32_t f1 = f[1];
+    int32_t f2 = f[2];
+    int32_t f3 = f[3];
+    int32_t f4 = f[4];
+    int32_t f5 = f[5];
+    int32_t f6 = f[6];
+    int32_t f7 = f[7];
+    int32_t f8 = f[8];
+    int32_t f9 = f[9];
+    int64_t h0 = f0 * (int64_t) 121666;
+    int64_t h1 = f1 * (int64_t) 121666;
+    int64_t h2 = f2 * (int64_t) 121666;
+    int64_t h3 = f3 * (int64_t) 121666;
+    int64_t h4 = f4 * (int64_t) 121666;
+    int64_t h5 = f5 * (int64_t) 121666;
+    int64_t h6 = f6 * (int64_t) 121666;
+    int64_t h7 = f7 * (int64_t) 121666;
+    int64_t h8 = f8 * (int64_t) 121666;
+    int64_t h9 = f9 * (int64_t) 121666;
+    int64_t carry0;
+    int64_t carry1;
+    int64_t carry2;
+    int64_t carry3;
+    int64_t carry4;
+    int64_t carry5;
+    int64_t carry6;
+    int64_t carry7;
+    int64_t carry8;
+    int64_t carry9;
+
+    carry9 = h9 + (1 << 24); h0 += (carry9 >> 25) * 19; h9 -= carry9 & kTop39Bits;
+    carry1 = h1 + (1 << 24); h2 += carry1 >> 25; h1 -= carry1 & kTop39Bits;
+    carry3 = h3 + (1 << 24); h4 += carry3 >> 25; h3 -= carry3 & kTop39Bits;
+    carry5 = h5 + (1 << 24); h6 += carry5 >> 25; h5 -= carry5 & kTop39Bits;
+    carry7 = h7 + (1 << 24); h8 += carry7 >> 25; h7 -= carry7 & kTop39Bits;
+
+    carry0 = h0 + (1 << 25); h1 += carry0 >> 26; h0 -= carry0 & kTop38Bits;
+    carry2 = h2 + (1 << 25); h3 += carry2 >> 26; h2 -= carry2 & kTop38Bits;
+    carry4 = h4 + (1 << 25); h5 += carry4 >> 26; h4 -= carry4 & kTop38Bits;
+    carry6 = h6 + (1 << 25); h7 += carry6 >> 26; h6 -= carry6 & kTop38Bits;
+    carry8 = h8 + (1 << 25); h9 += carry8 >> 26; h8 -= carry8 & kTop38Bits;
+
+    h[0] = (int32_t)h0;
+    h[1] = (int32_t)h1;
+    h[2] = (int32_t)h2;
+    h[3] = (int32_t)h3;
+    h[4] = (int32_t)h4;
+    h[5] = (int32_t)h5;
+    h[6] = (int32_t)h6;
+    h[7] = (int32_t)h7;
+    h[8] = (int32_t)h8;
+    h[9] = (int32_t)h9;
+}
+
+// this will be changed when dif bases added
+static void fe_cswap(fe f, fe g, unsigned int b)
+{
+    size_t i;
+
+    b = 0-b;
+    for (i = 0; i < 10; i++) {
+        int32_t x = f[i] ^ g[i];
+        x &= b;
+        f[i] ^= x;
+        g[i] ^= x;
+    }
+}
+
 /**
  * Compute the Legendre symbol e of w as
  * w ** ((p-1)/2) = w ** (2 ** 254 - 10) with the exponent as
@@ -268,78 +340,6 @@ static void cswap(uint8_t *t0, uint8_t *t1, unsigned int b)
   x &= b;
   *t0 ^= x;
   *t1 ^= x;
-}
-
-// this will be changed when dif bases added
-static void fe_mul121666(fe h, fe f)
-{
-    int32_t f0 = f[0];
-    int32_t f1 = f[1];
-    int32_t f2 = f[2];
-    int32_t f3 = f[3];
-    int32_t f4 = f[4];
-    int32_t f5 = f[5];
-    int32_t f6 = f[6];
-    int32_t f7 = f[7];
-    int32_t f8 = f[8];
-    int32_t f9 = f[9];
-    int64_t h0 = f0 * (int64_t) 121666;
-    int64_t h1 = f1 * (int64_t) 121666;
-    int64_t h2 = f2 * (int64_t) 121666;
-    int64_t h3 = f3 * (int64_t) 121666;
-    int64_t h4 = f4 * (int64_t) 121666;
-    int64_t h5 = f5 * (int64_t) 121666;
-    int64_t h6 = f6 * (int64_t) 121666;
-    int64_t h7 = f7 * (int64_t) 121666;
-    int64_t h8 = f8 * (int64_t) 121666;
-    int64_t h9 = f9 * (int64_t) 121666;
-    int64_t carry0;
-    int64_t carry1;
-    int64_t carry2;
-    int64_t carry3;
-    int64_t carry4;
-    int64_t carry5;
-    int64_t carry6;
-    int64_t carry7;
-    int64_t carry8;
-    int64_t carry9;
-
-    carry9 = h9 + (1 << 24); h0 += (carry9 >> 25) * 19; h9 -= carry9 & kTop39Bits;
-    carry1 = h1 + (1 << 24); h2 += carry1 >> 25; h1 -= carry1 & kTop39Bits;
-    carry3 = h3 + (1 << 24); h4 += carry3 >> 25; h3 -= carry3 & kTop39Bits;
-    carry5 = h5 + (1 << 24); h6 += carry5 >> 25; h5 -= carry5 & kTop39Bits;
-    carry7 = h7 + (1 << 24); h8 += carry7 >> 25; h7 -= carry7 & kTop39Bits;
-
-    carry0 = h0 + (1 << 25); h1 += carry0 >> 26; h0 -= carry0 & kTop38Bits;
-    carry2 = h2 + (1 << 25); h3 += carry2 >> 26; h2 -= carry2 & kTop38Bits;
-    carry4 = h4 + (1 << 25); h5 += carry4 >> 26; h4 -= carry4 & kTop38Bits;
-    carry6 = h6 + (1 << 25); h7 += carry6 >> 26; h6 -= carry6 & kTop38Bits;
-    carry8 = h8 + (1 << 25); h9 += carry8 >> 26; h8 -= carry8 & kTop38Bits;
-
-    h[0] = (int32_t)h0;
-    h[1] = (int32_t)h1;
-    h[2] = (int32_t)h2;
-    h[3] = (int32_t)h3;
-    h[4] = (int32_t)h4;
-    h[5] = (int32_t)h5;
-    h[6] = (int32_t)h6;
-    h[7] = (int32_t)h7;
-    h[8] = (int32_t)h8;
-    h[9] = (int32_t)h9;
-}
-
-// this will be changed when dif bases added
-static void fe_cswap(fe f, fe g, unsigned int b)
-{
-    size_t i;
-
-    b = 0-b;
-    for (i = 0; i < 10; i++) {
-        int32_t x = f[i] ^ g[i];
-        x &= b;
-        f[i] ^= x;
-        g[i] ^= x;
-    }
 }
 
 static void ge_p2_to_p3(ge_p3 *r, const ge_p2 *p)
