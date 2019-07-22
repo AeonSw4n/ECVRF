@@ -230,9 +230,10 @@ static void fe_cswap(fe f, fe g, unsigned int b)
  * We will do so using 253 squarings and 11 multiplications.
  * In the process, also compute sqrt_helper = w ** (p-5)/8 = (2 ** 252 - 3),
  * which costs us one extra multiplication (this value will be useful
- * for computing the square root of w if w is a square, or of related values
- * if not)
- * LC: why is this function called fe_fraction_sqrt_and_legendre -- what's the fraction here?
+ * for computing the square root of w, or square root of related values -- for example,
+ * if w = n * (d**7), this value helps us compute the square root of
+ * of n/d, because sqrt_helper * n * (d ** 3) = (n/d)**((p+3)/8),
+ * (because 7(p-5)/8+3 = (p-1)-(p+3)/8, and d ** (p-1) = 1).
  */
 static void fe_fraction_sqrt_and_legendre(fe sqrt_helper, fe e, const fe w)
 {
@@ -756,14 +757,14 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
  *
  * Variables:
  * A           - Montgomery constant A
- * A_cubed     - A ** 3
+ * A_cubed     - A ** 3 (denominator of the montgomery curve equation)
+ * numerator   - numerator of the montgomery curve equation
  * e           - Legendre symbol
  * b           - Conditional value
  * one         - 1 constant
  * sqrt2       - Square root of u=2
  * sqrtnAp2    - Square root of A+2
  * v, v2       - Montgomery y-coodrinates
- * w, w2       - Square of v
  * y           - Edwards y-coodrinate
  * p1p1        - Edwards point, completed system
  * p2          - Edwards point, projective system
@@ -772,50 +773,61 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
  * (more precisely, 514 squarings and 47 multplications, with fe_inverse and fe_fraction_sqrt_and_legendre taking up most of the time) */
 static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32], const fe r)
 {
-    fe A, A_cubed, e, one, sqrt2, sqrtnAp2, v, v2, w, w2, y;
-    fe z0, z1, t0, t1, t2, t3, recip, recip2, recip3, recip9, recip21, minvert;
+    fe A, A_cubed, e, one, sqrt2, sqrtnAp2, v, v2 y;
+    fe z0, numerator, t0, t1, t2, t3, recip, recip2, recip3, recip9, recip21, minvert;
     unsigned int b;
     ge_p1p1 p1p1;
     ge_p2 p2;
 
     fe_A(A), fe_A_cubed(A_cubed), fe_1(one), fe_sqrt_2(sqrt2), fe_sqrt_neg_A_plus_2(sqrtnAp2);
 
+    /* t0 = 2 * (r ** 2) */
+    fe_sq2(t0, r);
     /* recip = 1 + 2 * (r ** 2) */
-    fe_sq2(recip, r);
-    fe_add(recip, one, recip);
+    fe_add(recip, one, t0);
+    
+    /* We want to evaluate the montgomery curve equation w = u (u**2 + Au + 1) for u = -A/recip
+       Expressing this equation as a fraction, via a common denominator, we have
+       w = ([(recip - 1) * A ** 3] - [A * recip ** 2]) / recip ** 3 */
 
-    /* recip2 = recip ** 2 */
+    /* numerator = [(recip - 1) * A ** 3] - [A * recip ** 2], i.e., the numerator of w */
+    fe_mul(numerator, t0, A_cubed);
     fe_sq(recip2, recip);
-
-    /* z0 = [(recip - 1) * A ** 3] - [A * recip ** 2] */
-    /* z1 = z0 */
-    fe_sub(z0, recip, one); /* LC: can we eliminate this subtraction by moving the next line to before fe_add 7 lines above? */
-    fe_mul(z0, z0, A_cubed);
-    fe_mul(z1, recip2, A);
-    fe_sub(z0, z0, z1); /* LC: why not put this into z1 directly, eliminate the copy line below, and then use z1 as instead of z0 as the argument 13 lines below, i.e., change fe_mul(z0, z0, recip21) to fe_mul(z0, z1, recip21. In other words, we are you creating z0 here when you don't need it -- z1 alone is sufficient? */
-    fe_copy(z1, z0);
+    fe_mul(t0, recip2, A);
+    fe_sub(numerator, numerator, t0);
 
     /* recip3 = recip ** 3 */
-    /* recip9 = recip ** 9 */
-    /* recip21 = recip ** 21 */
     fe_mul(recip3, recip2, recip);
+    
+
+    /* We now have the numerator and the denominator of w. We need to evaluate the Legendre of w and takes its square root to get v
+       (or the square root of the related value ... if Legendre is -1). To avoid inversion, we will evaluate Legendre of
+       of numerator * denominator**7 (which is the same as Legendre of w = numerator / denominator); this will also help us with sqrt. */
+
+    /* recip9 = recip ** 9 */
+    /* recip21 = recip ** 21, i.e., denominator of w to the 7th power */
     fe_sq(recip9, recip3);
     fe_mul(recip9, recip9, recip3);
     fe_sq(recip21, recip9);
     fe_mul(recip21, recip21, recip3);
 
-    /* z0 = z0 * recip ** 21 */
-    fe_mul(z0, z0, recip21);
+    /* t0 = numerator * recip ** 21 = (numerator of w) * (denominator of w) ** 7 */
+    fe_mul(t0, numerator, recip21);
 
-    /* (v, e) = (sqrt(z0), legendre(z0)) */
-    fe_fraction_sqrt_and_legendre(v, e, z0);
+    /* (t1, e) = (t0 ** ((p-5)/8), legendre(t0) = legendre(w)) */
+    fe_fraction_sqrt_and_legendre(t1, e, t0);
     
-    /* LC: v = v * z1 * recip ** 9 */
-    fe_mul(v, v, z1);
+    /* v = t1 * numerator * recip ** 9 = w ** ((p+3)/8) */
+    /* (This equation works out because t0 = [(numerator of w) ** ((p-1)/8)] * [(denominator of w) ** (7(p-1)/8)], and so
+       t1 = [(numerator of w) ** ((p-1)/8+1)] * [(denominator of w) ** (7(p-1)/8+3)]. Note that 7(p-1)/8+3 = (p-1)-(p+3)/8.
+       So (denominator of w) ** (7(p-1)/8+3) = [(denominator of w)**(p-1)] * [(denominator of w)**(-(p+3)/8)] =
+       = 1 / [(denominator of w)**((p+3)/8)].
+     */
+    fe_mul(v, t1, numerator);
     fe_mul(v, v, recip9);
 
-    // e ==  1:  (t2, z0) = (-A, z1)
-    // e == -1:  (t2, z0) = (A(1 - recip), (2 * r ** 2) * z1)
+    // e ==  1:  (t2, z0) = (-A, numerator)
+    // e == -1:  (t2, z0) = (A(1 - recip), (2 * r ** 2) * numerator)
     b = ((e[0] + 1) & 2) >> 1;
     fe_copy(t3, A);
     fe_neg(t3, t3);
