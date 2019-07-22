@@ -503,6 +503,7 @@ static void ge_p3_merge_two_tobytes(uint8_t out1[32], uint8_t out2[32],
   out2[31] ^= fe_isnegative(x) << 7;
 }
 
+/* LC: Either explain this algorithm or point to a paper where it is explained */
 static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_t u2[32], uint8_t v2[32],
                                               const ge_p3 *p, const ge_p3 *q)
 {
@@ -643,6 +644,7 @@ static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe U, const fe V, const fe Z)
     ge_p1p1_to_p3(r, &p);
 }
 
+/* LC: Either explain this algorithm or point to a paper where it is explained */
 static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], const uint8_t vb[32],
                                 const fe U1, const fe Z1, const fe U2, const fe Z2)
 {
@@ -671,6 +673,7 @@ static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], con
     fe_mul(Z, T1, Z1);  // 19.   Z <-- T1 * Z1
 }
 
+/* LC: Either explain this algorithm or point to a paper where it is explained */
 static void montgomery_ladder(fe out_u2[32], fe out_z2[32], fe out_u3[32], fe out_z3[32],
                                        const uint8_t scalar[32], size_t scalar_len, const uint8_t in_u[32])
 {
@@ -757,10 +760,12 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
  *
  * Variables:
  * A           - Montgomery constant A
- * A_cubed     - A ** 3 (denominator of the montgomery curve equation)
+ * A_cubed     - A ** 3
+ * recip       - 1 + 2 * r**2
  * numerator   - numerator of the montgomery curve equation
+ * denom       - denominator of the montgomery curve equation (= recip**3)
  * e           - Legendre symbol
- * b           - Conditional value
+ * b           - Conditional value indicating if Legendre is 1
  * one         - 1 constant
  * sqrt2       - Square root of u=2
  * sqrtnAp2    - Square root of A+2
@@ -774,7 +779,7 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
 static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32], const fe r)
 {
     fe A, A_cubed, e, one, sqrt2, sqrtnAp2, v, v2 y;
-    fe z0, numerator, t0, t1, t2, t3, recip, recip2, recip3, recip9, recip21, minvert;
+    fe new_numerator, numerator, t0, t1, t2, t3, recip, recip2, denom, denom_cubed, denom7, recip21, minvert;
     unsigned int b;
     ge_p1p1 p1p1;
     ge_p2 p2;
@@ -796,62 +801,73 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     fe_mul(t0, recip2, A);
     fe_sub(numerator, numerator, t0);
 
-    /* recip3 = recip ** 3 */
-    fe_mul(recip3, recip2, recip);
+    /* denom = recip ** 3, i.e., the denominator of w */
+    fe_mul(denom, recip2, recip);
     
-
     /* We now have the numerator and the denominator of w. We need to evaluate the Legendre of w and takes its square root to get v
-       (or the square root of the related value ... if Legendre is -1). To avoid inversion, we will evaluate Legendre of
-       of numerator * denominator**7 (which is the same as Legendre of w = numerator / denominator); this will also help us with sqrt. */
+     (or the square root of the related value LC: which one??? if Legendre is -1). To avoid inversion, we will evaluate Legendre of
+       of numerator * denom**7 (which is the same as Legendre of w = numerator / denom); this will also help us with square root. */
 
-    /* recip9 = recip ** 9 */
-    /* recip21 = recip ** 21, i.e., denominator of w to the 7th power */
-    fe_sq(recip9, recip3);
-    fe_mul(recip9, recip9, recip3);
-    fe_sq(recip21, recip9);
-    fe_mul(recip21, recip21, recip3);
+    /* denom_cubed = denom ** 3 */
+    /* denom7 = denom ** 7 */
+    fe_sq(denom_cubed, denom);
+    fe_mul(denom_cubed, denom_cubed, denom);
+    fe_sq(denom7, denom_cubed);
+    fe_mul(denom7, denom7, denom);
 
-    /* t0 = numerator * recip ** 21 = (numerator of w) * (denominator of w) ** 7 */
-    fe_mul(t0, numerator, recip21);
+    /* t0 = numerator * denom ** 7 */
+    fe_mul(t0, numerator, denom7);
 
     /* (t1, e) = (t0 ** ((p-5)/8), legendre(t0) = legendre(w)) */
     fe_fraction_sqrt_and_legendre(t1, e, t0);
     
-    /* v = t1 * numerator * recip ** 9 = w ** ((p+3)/8) */
-    /* (This equation works out because t0 = [(numerator of w) ** ((p-1)/8)] * [(denominator of w) ** (7(p-1)/8)], and so
-       t1 = [(numerator of w) ** ((p-1)/8+1)] * [(denominator of w) ** (7(p-1)/8+3)]. Note that 7(p-1)/8+3 = (p-1)-(p+3)/8.
-       So (denominator of w) ** (7(p-1)/8+3) = [(denominator of w)**(p-1)] * [(denominator of w)**(-(p+3)/8)] =
-       = 1 / [(denominator of w)**((p+3)/8)].
+    /* t1 = t1 * numerator * denom ** 3 = w ** ((p+3)/8) */
+    /* (This equation works out because t0 = [numerator ** ((p-1)/8)] * [denom ** (7(p-1)/8)], and so
+       t1 = [numerator ** ((p-1)/8+1)] * [denom ** (7(p-1)/8+3)]. Note that 7(p-1)/8+3 = (p-1)-(p+3)/8.
+       So denom ** (7(p-1)/8+3) = [denom ** (p-1)] * [denom ** (-(p+3)/8)] =
+       = 1 / [denom ** ((p+3)/8)].
      */
-    fe_mul(v, t1, numerator);
-    fe_mul(v, v, recip9);
+    fe_mul(t1, t1, numerator);
+    fe_mul(t1, t1, denom_cubed);
 
-    // e ==  1:  (t2, z0) = (-A, numerator)
-    // e == -1:  (t2, z0) = (A(1 - recip), (2 * r ** 2) * numerator)
-    b = ((e[0] + 1) & 2) >> 1;
+    /* Note that now t1 ** 4 = w ** ((p+3)/2) = [w ** ((p-1)/2)] * [w ** 2] = e * [w ** 2] */
+
+    /* e ==  1:  (t2, new_numerator) = (-A, numerator) */
+    /* e == -1:  (t2, new_numerator) = (A(1 - recip), (2 * r ** 2) * numerator) */
+    b = ((e[0] + 1) & 2) >> 1; /* b == 0 iff e == -1 */
     fe_copy(t3, A);
     fe_neg(t3, t3);
     fe_sub(t2, one, recip);
     fe_mul(t2, A, t2);
-    fe_sq2(z0, r);
-    fe_mul(z0, z0, z1);
+    fe_sq2(new_numerator, r);
+    fe_mul(new_numerator, new_numerator, numerator);
     fe_cmov(t2, t3, b);
-    fe_cmov(z0, z1, b);
+    fe_cmov(new_numerator, numerator, b);
 
-    // e ==  1:  v = v
-    // e == -1:  v = v * r * sqrt(2)
+    /* e ==  1:  v = t1 */
+    /* e == -1:  v = t1 * r * sqrt(2) */
     fe_mul(sqrt2, sqrt2, r);
     fe_cmov(sqrt2, one, b);
-    fe_mul(v, v, sqrt2);
+    fe_mul(v, t1, sqrt2);
 
-    // (recip ** 3 * v ** 2) == z0:  v = v
-    // (recip ** 3 * v ** 2) != z0:  v = v * sqrt(-1)
+    /* Now we have the following:
+       If e = 1 (i.e., w is a square), then v ** 4 = t1 ** 4 = w ** 2, so v ** 2 = plusminus w = plusminus new_numerator / denom.
+       If e = -1 (i.e., w is a nonsquare), then v ** 4 = (t1 * r * sqrt(2)) ** 4  = [e * w ** 2] * [2 * r ** 2] = -[w ** 2] * [2 * r ** 2].
+     LC: I thought v would be square root of new_numerator/ denom up to, possibly, multiplication of v by sqrt of -1. But
+     that doesn't seem to to be the case, because of an extra minus sign two lines above. So now I don't understand the meaning of v.
+     LC: Can you explain what v is now? And can you explain how it relates to Elligator formulas?
+     */
+    
+    // (denom * v ** 2) != new_numerator:  v = v * sqrt(-1)
     fe_sq(v2, v);
-    fe_mul(v2, v2, recip3);
-    b = fe_ispositive(v2) ^ fe_ispositive(z0);
+    fe_mul(v2, v2, denom);
+    b = fe_ispositive(v2) ^ fe_ispositive(new_numerator);
     fe_cmov(one, sqrtm1, b);
     fe_mul(v, v, one);
-
+    
+    /* LC: can you explain what the Montgomery point is at this point in the code, even if you haven't computed it yet? */
+    /* LC: can you explain what X, Y, Z, and T are? */
+     
     // (x, y) = (|X/Z|, Y/T) is the +/- Edwards curve point before cofactor clearing
     // x = (sqrt(A + 2) * t2) / (v * recip)
     // y = (t2 - recip) / (t2 + recip)
