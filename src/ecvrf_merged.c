@@ -635,6 +635,8 @@ static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32],
   ge_dedicated_add(&sum[2], &sum[2], &sum[3]);
 
   ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
+
+  OPENSSL_cleanse(index, sizeof(index));
 }
 
 static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe U, const fe V, const fe Z)
@@ -694,8 +696,8 @@ static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], con
  * "Speeding the Pollard and Elliptic Curve Methods of Factorization", P. Montgomery, Section 10.
  * "Montgomery curves and the Montgomery ladder", D. Bernstein, T. Lange, 2017. Section 4.6
  */
-static void montgomery_ladder(fe out_u2[32], fe out_z2[32], fe out_u3[32], fe out_z3[32],
-                                       const uint8_t scalar[32], size_t scalar_len, const uint8_t in_u[32])
+static void montgomery_ladder(fe out_u2, fe out_z2, fe out_u3, fe out_z3,
+                                       const uint8_t scalar[32], const size_t scalar_len, const uint8_t in_u[32])
 {
     fe u1, u2, z2, u3, z3, tmp0, tmp1;
     uint8_t e[32];
@@ -742,7 +744,7 @@ static void montgomery_ladder(fe out_u2[32], fe out_z2[32], fe out_u3[32], fe ou
     fe_copy(out_z3, z3);
 
 
-
+    OPENSSL_cleanse(u1, sizeof(u1));
     OPENSSL_cleanse(e, sizeof(e)); /* LC: How do we decide when cleanse is needed? */
 }
 
@@ -1110,16 +1112,13 @@ static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
 
   ge_tobytes(gamma_cofactor, &gamma_p2);
 
-  uint8_t hash[SHA512_DIGEST_LENGTH] = {0}; /* LC: what's the point of this initiliaztion and others like it? */
   SHA512_CTX hash_ctx;
   SHA512_Init(&hash_ctx);
   SHA512_Update(&hash_ctx, &SUITE, 1);
   SHA512_Update(&hash_ctx, &THREE, 1);
   SHA512_Update(&hash_ctx, gamma_cofactor, 32);
-  SHA512_Final(hash, &hash_ctx);
+  SHA512_Final(beta, &hash_ctx);
 
-  /* LC: why not put final directly into beta? */
-  memcpy(beta, hash, 64);
   return 1;
 }
 
@@ -1131,9 +1130,7 @@ static void ECVRF_prove(double *t, uint8_t pi[80], const uint8_t SK_bytes[32],
   SHA512_CTX hash_ctx, nonce_ctx, c_ctx;
   const uint8_t SUITE  = 0x04;
   const uint8_t TWO    = 0x02;
-  uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
-  uint8_t nonce[SHA512_DIGEST_LENGTH] = {0};
-  uint8_t c_string[SHA512_DIGEST_LENGTH] = {0};
+  uint8_t hash[SHA512_DIGEST_LENGTH], nonce[SHA512_DIGEST_LENGTH], c_string[SHA512_DIGEST_LENGTH];
   uint8_t Y_bytes[32], H_bytes[32], G_bytes[32], kB_bytes[32], kH_bytes[32];
   uint8_t c[32], s[32], truncatedHash[32];
   ge_p3 Y, H;
@@ -1188,6 +1185,9 @@ static void ECVRF_prove(double *t, uint8_t pi[80], const uint8_t SK_bytes[32],
   memcpy(pi, G_bytes, 32);
   memcpy(pi+32, c, 16);
   memcpy(pi+48, s, 32);
+
+  OPENSSL_cleanse(hash, sizeof(hash));
+  OPENSSL_cleanse(nonce, sizeof(nonce));
 
 }
 
