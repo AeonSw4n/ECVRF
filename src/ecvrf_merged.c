@@ -853,7 +853,7 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     fe_mul(t1, t1, w_denom_cubed);
 
     /* Note that now t1 ** 4 = w ** ((p+3)/2) = [w ** ((p-1)/2)] * [w ** 2] = e * [w ** 2] */
-    
+
     /* If e == 1, we will keep the same u and w.
        If e == -1, then we will replace u by 2 * r**2 * u (== -A-u) and replace w by 2 * r**2 * w.
        Either way, we need the square root of w to get v (also known as "montgomery y coordinate"), which we will obtain from t1.
@@ -899,6 +899,7 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     /* We will use the complete coordinate system to represent x as X/Z and y as Y/T thus avoiding inversions */
     fe_mul(p1p1.X, sqrtnAp2, u_numerator);
     fe_mul(p1p1.Z, v, u_denom);
+    fe_mul(v, v, u_denom);
     fe_sub(p1p1.Y, u_numerator, u_denom);
     fe_add(p1p1.T, u_numerator, u_denom);
 
@@ -914,27 +915,28 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     /* We will need inverses of both v and out_point->Z. To avoid two inversions, we will multiply them and invert the product */
     fe_mul(minvert, v, out_point->Z);
     fe_invert(minvert, minvert);
-    
+
     /* t2 = 1/v */
     fe_mul(t2, minvert, out_point->Z);
-    
+
     /* t1 = 1/out_point->Z */
     fe_mul(t1, minvert, v);
 
 
     /* negate 8(x, y) if (x, y) was negative */
+    fe_mul(sqrtnAp2, sqrtnAp2, u_numerator);
     fe_mul(t2, t2, sqrtnAp2); // LC: t2 = sqrtnAp2 / v
     fe_neg(t3, out_point->X);
     fe_neg(t0, out_point->T);
     b = !fe_ispositive(t2); // LC: why is sign of t2 the value I want?
     fe_cmov(out_point->X, t3, b);
     fe_cmov(out_point->T, t0, b);
-    
+
     /* Convert out_point from p3 representation to bytes, without another inversion */
     fe_mul(t3, t1, out_point->Y);
     fe_mul(t2, t1, out_point->X);
     fe_tobytes(out_point_bytes, t3);
-    out_point_bytes[31] ^= fe_isnegative(t1) << 7;
+    out_point_bytes[31] ^= fe_isnegative(t2) << 7;
 }
 
 /**
