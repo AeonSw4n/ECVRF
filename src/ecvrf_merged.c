@@ -992,6 +992,42 @@ static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_
 
 }
 
+static int ECVRF_decode_proof_vartime(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_t* pi)
+{
+  /*
+
+
+    2.  let c_string = pi_string[ptLen]...pi_string[ptLen+n-1]
+
+    3.  let s_string =pi_string[ptLen+n]...pi_string[ptLen+n+qLen-1]
+
+    4.  Gamma = string_to_point(gamma_string)
+
+    5.  if Gamma = "INVALID" output "INVALID" and stop.
+
+    6.  c = string_to_int(c_string)
+
+    7.  s = string_to_int(s_string)
+
+    8.  Output Gamma, c, and s
+  */
+
+  // 1.  let gamma_string = pi_string[0]...p_string[ptLen-1]
+  uint8_t gamma_string[32];
+  memcpy(gamma_string, pi, 32);
+
+  if(ge_frombytes_vartime(Gamma, gamma_string) == -1)
+    return -1;
+
+  memset(c, 0, 32);
+
+  memcpy(c, pi+32, 16);
+  memcpy(s, pi+48, 32);
+
+  return 1;
+
+}
+
 static int ECVRF_proof_to_hash(uint8_t *beta, const uint8_t *pi)
 {
   /*
@@ -1063,11 +1099,7 @@ static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
     6.  Output beta_string
   */
 
-  uint8_t gamma[32], c[16], s[32];
-
-  memcpy(gamma, pi, 32);
-  memcpy(c, pi+32, 16);
-  memcpy(s, pi+48, 32);
+  uint8_t c[16], s[32];
 
   static const uint8_t SUITE  = 0x04;
   static const uint8_t THREE  = 0x03;
@@ -1076,7 +1108,7 @@ static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
   ge_p3 gamma_p3;
   ge_p2 gamma_p2;
   ge_p1p1 gamma_p1p1;
-  if(ge_frombytes_vartime(&gamma_p3, gamma) == -1)
+  if(ECVRF_decode_proof_vartime(&gamma_p3, c, s, pi) == -1)
     return -1;
 
 
@@ -1195,7 +1227,7 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
   ge_p3 H, G, U, V, Y;
   ge_p2 U_p2;
     // LC: why not ge_frombytes_vartime -- why waste time on constant-time?
-  int status = ECVRF_decode_proof(&G, c, s, pi);
+  int status = ECVRF_decode_proof_vartime(&G, c, s, pi);
 
   if(!status)
     return 0;
