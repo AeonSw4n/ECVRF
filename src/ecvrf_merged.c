@@ -58,12 +58,14 @@ static void fe_A_cubed(fe out)
 }
 
 /**
+ * LC: It seems this function is not needed
  * Returns, via parameter out, a field element equal to the
  * positive square root of A + 2 (= 486664), i.e. (A + 2)^{2^{252}-2} mod p (where p = 2^{255}-19)
  * A = 48662 is the value from the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
  * LC: (a) how is "positive" defined and (b) are we sure (A + 2)^{2^{252}-2} mod p is positive and not negative?
  * LC: if we are not sure about (b), just omit that part of the comment, and simply leave "positive square root" and
  * LC: an explanation of how "positive" is defined
+ * LC: in fact, we probably don't care if it's positive or negative
  */
 static void fe_sqrt_A_plus_2(fe out)
 {
@@ -98,10 +100,10 @@ static void fe_sqrt_neg_A_plus_2(fe out)
 
 /**
  * Returns, via parameter out, a field element equal to the
- * positive square root of 2, i.e. 2^{2^{252}-2} mod p (where p = 2^{255}-19)
- * LC: same quesiton as for fe_sqrt_A_plus_2
+ * fourth root of -4; specifically 2^{2^{252}-2} mod p (where p = 2^{255}-19)
+ * LC: could you double check that this really is computed as 2^{2^{252}-2} mod p?
  */
-static void fe_sqrt_2(fe out)
+static void fe_fourth_root_of_neg_4(fe out)
 {
   out[0] = 32595791;
   out[1] = 7943725;
@@ -119,6 +121,8 @@ static void fe_sqrt_2(fe out)
  * Returns 0 if field element h is negative
  * Returns 1 if field element h is positive
  * LC: how is positive and negative defined?
+ * Sign of a field element defned as in
+ * "High-speed high-security signatures", D. Bernstein et al., 2007, Section 2.
  */
 static unsigned int fe_ispositive(const fe h)
 {
@@ -330,7 +334,7 @@ static void fe_fraction_sqrt_and_legendre(fe sqrt_helper, fe e, const fe w)
   /* l1 = l1 ** 4 = w ** (2 ** 252 - 4) */
   fe_sq(l1, l1);
   fe_sq(l1, l1);
-    
+
   /* sqrt_helper = w ** (2**252 - 3) */
   fe_mul(sqrt_helper, l1, w);
 
@@ -415,7 +419,7 @@ static void ge_p3_neg(ge_p3 *r, const ge_p3 *p)
 /**
  * Retrieve extended Edwards point from bytes in constant time
  *
- * Cost: 1S
+ * Approcimate cost: 1S per bit (where S is the cost of fe squaring)
  */
 static int ge_p3_frombytes(ge_p3 *h, const uint8_t s[32])
 {
@@ -550,6 +554,8 @@ static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_
  * (X3:Y3:Z3:T3) = (X1:Y1:Z1:T1) + (X2:Y2:Z2:T2)
  *
  * Cost: 8M total
+ *
+ * "Twisted Edwards Curves Revisited", H. Hisil et al., Section 3.2
  */
 static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
 {
@@ -578,7 +584,7 @@ static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
 /**
  * Calculate (out1, out2) = (scalar1 * H, scalar2 * H) in constant time
  *
- * Cost: 12M + 4S + 1C
+ * Cost: 12M + 4S + 1C per bit of scalar
  */
 static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32],
                         const ge_p3 *H, const uint8_t scalar1[32], const uint8_t scalar2[32])
@@ -645,6 +651,12 @@ static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe U, const fe V, const fe Z)
 }
 
 /* LC: Either explain this algorithm or point to a paper where it is explained */
+/**
+ * Recovery formula for Montgomery y-Coordinate
+ *
+ * "Efficient Elliptic Curve Cryptosystems from a Scalar Multiplication Algorithms with Recovery
+ *  of the y-Coordinate on a Montgomery-Form Elliptic Curve", K. Okeya, K. Sakurai, 2001, Section 3
+ */
 static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], const uint8_t vb[32],
                                 const fe U1, const fe Z1, const fe U2, const fe Z2)
 {
@@ -674,6 +686,14 @@ static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], con
 }
 
 /* LC: Either explain this algorithm or point to a paper where it is explained */
+/**
+ * Montgomery Ladder
+ *
+ * Cost: 5M + 4S + 1C
+ *
+ * "Speeding the Pollard and Elliptic Curve Methods of Factorization", P. Montgomery, Section 10.
+ * "Montgomery curves and the Montgomery ladder", D. Bernstein, T. Lange, 2017. Section 4.6
+ */
 static void montgomery_ladder(fe out_u2[32], fe out_z2[32], fe out_u3[32], fe out_z3[32],
                                        const uint8_t scalar[32], size_t scalar_len, const uint8_t in_u[32])
 {
@@ -723,7 +743,7 @@ static void montgomery_ladder(fe out_u2[32], fe out_z2[32], fe out_u3[32], fe ou
 
 
 
-    OPENSSL_cleanse(e, sizeof(e));
+    OPENSSL_cleanse(e, sizeof(e)); /* LC: How do we decide when cleanse is needed? */
 }
 
 static void montgomery_ladder_scalar_mult(ge_p3 *r, const uint8_t *scalar, const size_t scalar_len,
@@ -758,16 +778,17 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
  * bytes format through out_point_bytes. Point is derived from
  * field element r.
  *
+ * LC: this is out of date. Not sure we should keep it at all. The code is now more self-explanatory.
  * Variables:
  * A           - Montgomery constant A
  * A_cubed     - A ** 3
  * recip       - 1 + 2 * r**2
- * numerator   - numerator of the montgomery curve equation
- * denom       - denominator of the montgomery curve equation (= recip**3)
+ * w_numerator - numerator of the montgomery curve equation
+ * w_denom       - denominator of the montgomery curve equation (= u_denom**3)
  * e           - Legendre symbol
  * b           - Conditional value indicating if Legendre is 1
  * one         - 1 constant
- * sqrt2       - Square root of u=2
+ * rt4_neg_4   - Fourth root of -4
  * sqrtnAp2    - Square root of A+2
  * v, v2       - Montgomery y-coodrinates
  * y           - Edwards y-coodrinate
@@ -778,56 +799,58 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
  * (more precisely, 514 squarings and 47 multplications, with fe_inverse and fe_fraction_sqrt_and_legendre taking up most of the time) */
 static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32], const fe r)
 {
-    fe A, A_cubed, e, one, sqrt2, sqrtnAp2, v, v2 y;
-    fe new_numerator, numerator, t0, t1, t2, t3, recip, recip_squared, denom, denom_cubed, denom7, minvert;
+    fe A, A_cubed, e, one, rt4_neg_4, sqrtnAp2, v, v_squared, y;
+    fe new_w_numerator, w_numerator, t0, t1, t2, t3, u_numerator, u_denom, recip_squared, w_denom, w_denom_cubed, w_denom_to_7, minvert;
     unsigned int b;
     ge_p1p1 p1p1;
     ge_p2 p2;
 
-    fe_A(A), fe_A_cubed(A_cubed), fe_1(one), fe_sqrt_2(sqrt2), fe_sqrt_neg_A_plus_2(sqrtnAp2);
+    fe_A(A), fe_A_cubed(A_cubed), fe_1(one), fe_fourth_root_of_neg_4(rt4_neg_4), fe_sqrt_neg_A_plus_2(sqrtnAp2);
 
     /* t0 = 2 * (r ** 2) */
     fe_sq2(t0, r);
-    /* recip = 1 + 2 * (r ** 2) */
-    fe_add(recip, one, t0);
-    
-    /* We want to evaluate the montgomery curve equation w = u (u**2 + Au + 1) for u = -A/recip
+    /* u_denom = 1 + 2 * (r ** 2) */
+    fe_add(u_denom, one, t0);
+
+    /* We want to evaluate the montgomery curve equation w = u (u**2 + Au + 1) for u = -A/u_denom
        Expressing this equation as a fraction, via a common denominator, we have
-       w = ([(recip - 1) * A ** 3] - [A * recip ** 2]) / recip ** 3 */
+       w = ([(u_denom - 1) * A ** 3] - [A * u_denom ** 2]) / u_denom ** 3 */
 
-    /* numerator = [(recip - 1) * A ** 3] - [A * recip ** 2], i.e., the numerator of w */
-    fe_mul(numerator, t0, A_cubed);
-    fe_sq(recip_squared, recip);
+    /* w_numerator = [(u_denom - 1) * A ** 3] - [A * u_denom ** 2] */
+    fe_mul(w_numerator, t0, A_cubed);
+    fe_sq(recip_squared, u_denom);
     fe_mul(t0, recip_squared, A);
-    fe_sub(numerator, numerator, t0);
+    fe_sub(w_numerator, w_numerator, t0);
 
-    /* denom = recip ** 3, i.e., the denominator of w */
-    fe_mul(denom, recip_squared, recip);
-    
-    /* We now have the numerator and the denominator of w. We need to evaluate the Legendre of w and takes its square root to get v
-     (or the square root of the related value LC: which one??? if Legendre is -1). To avoid inversion, we will evaluate Legendre of
-       of numerator * denom**7 (which is the same as Legendre of w = numerator / denom); this will also help us with square root. */
+    /* w_denom = u_denom ** 3, i.e., the denominator of w */
+    fe_mul(w_denom, recip_squared, u_denom);
 
-    /* denom_cubed = denom ** 3 */
-    /* denom7 = denom ** 7 */
-    fe_sq(denom_cubed, denom);
-    fe_mul(denom_cubed, denom_cubed, denom);
-    fe_sq(denom7, denom_cubed);
-    fe_mul(denom7, denom7, denom);
+    /* We now have the numerator and the denominator of w. We need to evaluate the Legendre of w and takes its square root or the square root
+       of 2rw (depending on whether is a square) to get v.
+      To avoid inversion, we will evaluate Legendre of w_numerator * w_denom**7 (which is the same as Legendre of w); this will also help us with square root.
+      This trick is described by Bernstein et al. in "High-speed high-security signatures" in Sec. 5. LC: get a better reference and double check It is easy to see that the Legendre can also be acquired from that routine.
+    */
 
-    /* t0 = numerator * denom ** 7 */
-    fe_mul(t0, numerator, denom7);
+    /* w_denom_cubed = w_denom ** 3 */
+    /* w_denom_to_7 = w_denom ** 7 */
+    fe_sq(w_denom_cubed, w_denom);
+    fe_mul(w_denom_cubed, w_denom_cubed, w_denom);
+    fe_sq(w_denom_to_7, w_denom_cubed);
+    fe_mul(w_denom_to_7, w_denom_to_7, w_denom);
+
+    /* t0 = w_numerator * w_denom ** 7 */
+    fe_mul(t0, w_numerator, w_denom_to_7);
 
     /* (t1, e) = (t0 ** ((p-5)/8), legendre(t0) = legendre(w)) */
     fe_fraction_sqrt_and_legendre(t1, e, t0);
-    
-    /* t1 = t1 * numerator * denom ** 3 = w ** ((p+3)/8) */
-    /* (This equation works out because t0 = [numerator ** ((p-1)/8)] * [denom ** (7(p-1)/8)], and so
-       t1 = [numerator ** ((p-1)/8+1)] * [denom ** (7(p-1)/8+3)]. Note that 7(p-1)/8+3 = (p-1)-(p+3)/8.
-       So denom ** (7(p-1)/8+3) = [denom ** (p-1)] * [denom ** (-(p+3)/8)] = 1 / [denom ** ((p+3)/8)].
+
+    /* t1 = t1 * w_numerator * w_denom ** 3 = w ** ((p+3)/8) */
+    /* (This equation works out because t0 = [w_numerator ** ((p-1)/8)] * [w_denom ** (7(p-1)/8)], and so
+       t1 = [w_numerator ** ((p-1)/8+1)] * [w_denom ** (7(p-1)/8+3)]. Note that 7(p-1)/8+3 = (p-1)-(p+3)/8.
+       So w_denom ** (7(p-1)/8+3) = [w_denom ** (p-1)] * [w_denom ** (-(p+3)/8)] = 1 / [w_denom ** ((p+3)/8)].
      */
-    fe_mul(t1, t1, numerator);
-    fe_mul(t1, t1, denom_cubed);
+    fe_mul(t1, t1, w_numerator);
+    fe_mul(t1, t1, w_denom_cubed);
 
     /* Note that now t1 ** 4 = w ** ((p+3)/2) = [w ** ((p-1)/2)] * [w ** 2] = e * [w ** 2] */
     
@@ -836,53 +859,50 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
        Either way, we need the square root of w to get v (also known as "montgomery y coordinate"), which we will obtain from t1.
      */
 
-    /* e ==  1:  (t2, new_numerator) = (-A, numerator) */
-    /* e == -1:  (t2, new_numerator) = (A(1 - recip), (2 * r ** 2) * numerator) */
+    /* e ==  1:  (u_numerator, new_w_numerator) = (-A, w_numerator) */
+    /* e == -1:  (u_numerator, new_w_numerator) = (A(1 - u_denom), (2 * r ** 2) * w_numerator) */
     b = ((e[0] + 1) & 2) >> 1; /* b == 0 iff e == -1 */
     fe_copy(t3, A);
     fe_neg(t3, t3);
-    fe_sub(t2, one, recip);
-    fe_mul(t2, A, t2);
-    fe_sq2(new_numerator, r);
-    fe_mul(new_numerator, new_numerator, numerator);
-    fe_cmov(t2, t3, b);
-    fe_cmov(new_numerator, numerator, b);
+    fe_sub(u_numerator, one, u_denom);
+    fe_mul(u_numerator, A, u_numerator);
+    fe_sq2(new_w_numerator, r);
+    fe_mul(new_w_numerator, new_w_numerator, w_numerator);
+    fe_cmov(u_numerator, t3, b);
+    fe_cmov(new_w_numerator, w_numerator, b);
 
     /* e ==  1:  v = t1 */
-    /* e == -1:  v = t1 * r * sqrt(2) */
-    fe_mul(sqrt2, sqrt2, r);
-    fe_cmov(sqrt2, one, b);
-    fe_mul(v, t1, sqrt2);
+    /* e == -1:  v = t1 * r * fourth_root_of_negative_4 */
+    fe_mul(rt4_neg_4, rt4_neg_4, r);
+    fe_cmov(rt4_neg_4, one, b);
+    fe_mul(v, t1, rt4_neg_4);
 
-    /* Now we have the following:
-       If e = 1 (i.e., w is a square), then v ** 4 = t1 ** 4 = w ** 2, so v ** 2 = plusminus w = plusminus new_numerator / denom.
-       If e = -1 (i.e., w is a nonsquare), then v ** 4 = (t1 * r * sqrt(2)) ** 4  = [e * w ** 2] * [2 * r ** 2] = -[w ** 2] * [2 * r ** 2].
-     LC: I thought v would be square root of new_numerator/ denom up to, possibly, multiplication of v by sqrt of -1. But
-     that doesn't seem to to be the case, because of an extra minus sign two lines above. So now I don't understand the meaning of v.
-     LC: Can you explain what v is now? And can you explain how it relates to Elligator formulas?
+    /* Now we have the following: letting new_w = new_w_numerator/w_denom:
+       If e = 1 (i.e., w is a square), then v ** 4 = t1 ** 4 = w ** 2 = new_w ** 2
+       If e = -1 (i.e., w is a nonsquare), then v ** 4 = [(t1 * r) ** 4] * [-4]  = -[w ** 2] * [r ** 4] * [-4] = [2 * r**2 * w]^2 = new_w ** 2.
+       Thus, in either case, so v ** 2 = plusminus new_w = plusminus new_w_numerator / w_denom.
+       We will now fix this plusminus issue by multiplying v  sqrt(-1) if needed.
      */
-    
-    // (denom * v ** 2) != new_numerator:  v = v * sqrt(-1)
-    fe_sq(v2, v);
-    fe_mul(v2, v2, denom);
-    b = fe_ispositive(v2) ^ fe_ispositive(new_numerator);
+
+    /* If v ** 2 has a different sign from new_w (= new_w_numerator / w_denom), then  v = v * sqrt(-1) */
+    fe_sq(v_squared, v);
+    fe_mul(v_squared, v_squared, w_denom);
+    /* I think you can just look at the very last bit of each and see if they are equal -- but I am not sure b/c of the specific field encoding used */
+    b = fe_ispositive(v_squared) ^ fe_ispositive(new_w_numerator);
     fe_cmov(one, sqrtm1, b);
     fe_mul(v, v, one);
-    
-    /* LC: can you explain what the Montgomery point is at this point in the code, even if you haven't computed it yet? */
-    /* LC: can you explain what X, Y, Z, and T are? */
-     
-    // (x, y) = (|X/Z|, Y/T) is the +/- Edwards curve point before cofactor clearing
-    // x = (sqrt(A + 2) * t2) / (v * recip)
-    // y = (t2 - recip) / (t2 + recip)
-    fe_mul(sqrtnAp2, sqrtnAp2, t2);
-    fe_mul(v, v, recip);
-    fe_sub(p1p1.Y, t2, recip);
-    fe_add(p1p1.T, t2, recip);
-    fe_copy(p1p1.X, sqrtnAp2);
-    fe_copy(p1p1.Z, v);
 
-    // out_point = 8(x, y)
+    /* The Montgomery point, up to sign of v, is now (u = u_numerator/u_denom, v) */
+    /* Now we convert it to Edwards via
+       x = sqrt(-(A+2)) * u / v = (sqrt(-(A + 2)) * u_numerator) / (v * u_denom)
+       y = (u-1)/u+1 = (u_numerator - u_denom) / (u_numerator + u_denom) */
+    /* We will use the complete coordinate system to represent x as X/Z and y as Y/T thus avoiding inversions */
+    fe_mul(p1p1.X, sqrtnAp2, u_numerator);
+    fe_mul(p1p1.Z, v, u_denom);
+    fe_sub(p1p1.Y, u_numerator, u_denom);
+    fe_add(p1p1.T, u_numerator, u_denom);
+
+    /* Clear the cofactor: out_point = 8(x, y) */
     ge_p1p1_to_p2(&p2, &p1p1);
     ge_p2_dbl(&p1p1, &p2);
     ge_p1p1_to_p2(&p2, &p1p1);
@@ -891,28 +911,30 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     ge_p2_dbl(&p1p1, &p2);
     ge_p1p1_to_p3(out_point, &p1p1);
 
-    // minvert = 1 / (v * Z * (Z - Y))
-    fe_copy(minvert, v);
-    fe_mul(minvert, minvert, out_point->Z);
-    fe_copy(t0, out_point->Z);
-    fe_sub(t0, t0, out_point->Y);
-    fe_mul(minvert, minvert, t0);
+    /* We will need inverses of both v and out_point->Z. To avoid two inversions, we will multiply them and invert the product */
+    fe_mul(minvert, v, out_point->Z);
     fe_invert(minvert, minvert);
+    
+    /* t2 = 1/v */
+    fe_mul(t2, minvert, out_point->Z);
+    
+    /* t1 = 1/out_point->Z */
+    fe_mul(t1, minvert, v);
 
-    // fix sign of 8(x, y) if (x, y) was negative
-    fe_mul(t1, minvert, t0);
-    fe_mul(t2, t1, out_point->Z);
-    fe_mul(t2, t2, sqrtnAp2);
+
+    /* negate 8(x, y) if (x, y) was negative */
+    fe_mul(t2, t2, sqrtnAp2); // LC: t2 = sqrtnAp2 / v
     fe_neg(t3, out_point->X);
     fe_neg(t0, out_point->T);
-    b = !fe_ispositive(t2);
+    b = !fe_ispositive(t2); // LC: why is sign of t2 the value I want?
     fe_cmov(out_point->X, t3, b);
     fe_cmov(out_point->T, t0, b);
-    fe_mul(t2, t1, v);
-    fe_mul(t3, t2, out_point->Y);
-    fe_mul(t2, t2, out_point->X);
+    
+    /* Convert out_point from p3 representation to bytes, without another inversion */
+    fe_mul(t3, t1, out_point->Y);
+    fe_mul(t2, t1, out_point->X);
     fe_tobytes(out_point_bytes, t3);
-    out_point_bytes[31] ^= fe_isnegative(t2) << 7;
+    out_point_bytes[31] ^= fe_isnegative(t1) << 7;
 }
 
 /**
@@ -1086,7 +1108,7 @@ static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
 
   ge_tobytes(gamma_cofactor, &gamma_p2);
 
-  uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
+  uint8_t hash[SHA512_DIGEST_LENGTH] = {0}; /* LC: what's the point of this initiliaztion and others like it? */
   SHA512_CTX hash_ctx;
   SHA512_Init(&hash_ctx);
   SHA512_Update(&hash_ctx, &SUITE, 1);
@@ -1094,6 +1116,7 @@ static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
   SHA512_Update(&hash_ctx, gamma_cofactor, 32);
   SHA512_Final(hash, &hash_ctx);
 
+  /* LC: why not put final directly into beta? */
   memcpy(beta, hash, 64);
   return 1;
 }
@@ -1138,9 +1161,9 @@ static void ECVRF_prove(double *t, uint8_t pi[80], const uint8_t SK_bytes[32],
   ge_scalarmult_base(&Y, nonce);
   ge_p3_tobytes(kB_bytes, &Y);
 
-  *t = (double)clock();
+  *t = (double)clock(); // LC: delete this
   double_scalar_fixed_point_mult(kH_bytes, G_bytes, &H, nonce, truncatedHash);
-  *t = (double)clock()-(*t);
+  *t = (double)clock()-(*t); // LC: delete this
   //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
 
   SHA512_Init(&c_ctx);
@@ -1190,6 +1213,7 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
   uint8_t c[32], s[32], H_bytes[32], U_bytes[32], V_bytes[32];
   ge_p3 H, G, U, V, Y;
   ge_p2 U_p2;
+    // LC: why not ge_frombytes_vartime -- why waste time on constant-time?
   int status = ECVRF_decode_proof(&G, c, s, pi);
 
   if(!status)
@@ -1202,9 +1226,10 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
   ge_double_scalarmult_vartime(&U_p2, c, &Y, s);
   ge_p2_to_p3(&U, &U_p2);
 
+    /* LC: explain why we choose montgomery algorithm here but edwards algorithm in the previous line */
   montgomery_double_scalar_mult_difference(&V, &H, &G, s, 32, c, 16);
 
-  ge_p3_merge_two_tobytes(U_bytes, V_bytes, &U, &V);
+  ge_p3_merge_two_tobytes(U_bytes, V_bytes, &U, &V); /* LC: This could be further sped up if we used vartime inversion, but not clear if worth implementing */
 
   static const uint8_t SUITE  = 0x04;
   static const uint8_t TWO    = 0x02;
@@ -1223,5 +1248,5 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
   memset(cp, 0, 32);
   memcpy(cp, cp_string, 16);
 
-  return by_cmp(c, cp);
+  return by_cmp(c, cp); /* This is the only piece of code from by_ that we seem to be using. Should we eliminate by_ competely? */
 }
