@@ -780,31 +780,14 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
  * bytes format through out_point_bytes. Point is derived from
  * field element r.
  *
- * LC: this is out of date. Not sure we should keep it at all. The code is now more self-explanatory.
- * Variables:
- * A           - Montgomery constant A
- * A_cubed     - A ** 3
- * recip       - 1 + 2 * r**2
- * w_numerator - numerator of the montgomery curve equation
- * w_denom       - denominator of the montgomery curve equation (= u_denom**3)
- * e           - Legendre symbol
- * b           - Conditional value indicating if Legendre is 1
- * one         - 1 constant
- * rt4_neg_4   - Fourth root of -4
- * sqrtnAp2    - Square root of A+2
- * v, v2       - Montgomery y-coodrinates
- * y           - Edwards y-coodrinate
- * p1p1        - Edwards point, completed system
- * p2          - Edwards point, projective system
- *
  * Cost per bit of r: approximately 2S + 0.2M (S =  squaring, M = fe multiplication)
- * (more precisely, 514 squarings and 47 multplications, with fe_inverse and fe_fraction_sqrt_and_legendre taking up most of the time) */
+ * (more precisely, 514 squarings and 45 multplications, with fe_inverse and fe_fraction_sqrt_and_legendre taking up most of the time) */
 static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32], const fe r)
 {
     fe A, A_cubed, e, one, rt4_neg_4, sqrtnAp2, v, v_squared, y;
-    fe new_w_numerator, w_numerator, t0, t1, t2, t3, u_numerator, u_denom, recip_squared, w_denom, w_denom_cubed, w_denom_to_7, minvert;
+    fe new_w_numerator, w_numerator, t0, t1, t2, t3, u_numerator, u_denom, recip_squared, w_denom, w_denom_cubed, w_denom_to_7;
     unsigned int b;
-    ge_p1p1 p1p1;
+    ge_p1p1 pre_cofactor_p1p1, p1p1;
     ge_p2 p2;
 
     fe_A(A), fe_A_cubed(A_cubed), fe_1(one), fe_fourth_root_of_neg_4(rt4_neg_4), fe_sqrt_neg_A_plus_2(sqrtnAp2);
@@ -899,14 +882,13 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
        x = sqrt(-(A+2)) * u / v = (sqrt(-(A + 2)) * u_numerator) / (v * u_denom)
        y = (u-1)/u+1 = (u_numerator - u_denom) / (u_numerator + u_denom) */
     /* We will use the complete coordinate system to represent x as X/Z and y as Y/T thus avoiding inversions */
-    fe_mul(p1p1.X, sqrtnAp2, u_numerator);
-    fe_mul(p1p1.Z, v, u_denom);
-    fe_mul(v, v, u_denom);
-    fe_sub(p1p1.Y, u_numerator, u_denom);
-    fe_add(p1p1.T, u_numerator, u_denom);
+    fe_mul(pre_cofactor_p1p1.X, sqrtnAp2, u_numerator);
+    fe_mul(pre_cofactor_p1p1.Z, v, u_denom);
+    fe_sub(pre_cofactor_p1p1.Y, u_numerator, u_denom);
+    fe_add(pre_cofactor_p1p1.T, u_numerator, u_denom);
 
     /* Clear the cofactor: out_point = 8(x, y) */
-    ge_p1p1_to_p2(&p2, &p1p1);
+    ge_p1p1_to_p2(&p2, &pre_cofactor_p1p1);
     ge_p2_dbl(&p1p1, &p2);
     ge_p1p1_to_p2(&p2, &p1p1);
     ge_p2_dbl(&p1p1, &p2);
@@ -914,23 +896,21 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     ge_p2_dbl(&p1p1, &p2);
     ge_p1p1_to_p3(out_point, &p1p1);
 
-    /* We will need inverses of both v and out_point->Z. To avoid two inversions, we will multiply them and invert the product */
-    fe_mul(minvert, v, out_point->Z);
-    fe_invert(minvert, minvert);
+    /* We will need inverses of both pre_cofactor_p1p1.Z and out_point->Z. To avoid two inversions, we will multiply them and invert the product */
+    fe_mul(t0, pre_cofactor_p1p1.Z, out_point->Z);
+    fe_invert(t0, t0);
 
-    /* t2 = 1/v */
-    fe_mul(t2, minvert, out_point->Z);
+    /* t2 = 1/pre_cofactor_p1p1.Z */
+    fe_mul(t2, t0, out_point->Z);
 
     /* t1 = 1/out_point->Z */
-    fe_mul(t1, minvert, v);
+    fe_mul(t1, t0, pre_cofactor_p1p1.Z);
 
-
-    /* negate 8(x, y) if (x, y) was negative */
-    fe_mul(sqrtnAp2, sqrtnAp2, u_numerator);
-    fe_mul(t2, t2, sqrtnAp2); // LC: t2 = sqrtnAp2 / v
+    /* negate 8(x, y) if x in the point (x, y) before cofactor clearing was negative */
+    fe_mul(t2, t2, pre_cofactor_p1p1.X);
     fe_neg(t3, out_point->X);
     fe_neg(t0, out_point->T);
-    b = !fe_ispositive(t2); // LC: why is sign of t2 the value I want?
+    b = !fe_ispositive(t2);
     fe_cmov(out_point->X, t3, b);
     fe_cmov(out_point->T, t0, b);
 
