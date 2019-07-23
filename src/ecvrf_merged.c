@@ -1133,7 +1133,7 @@ static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
   return 1;
 }
 
-static void ECVRF_prove(double *t, uint8_t pi[80], const uint8_t SK_bytes[32],
+static void ECVRF_prove(uint8_t pi[80], const uint8_t SK_bytes[32],
                     const uint8_t* alpha, const size_t alpha_len)
 {
 
@@ -1171,9 +1171,7 @@ static void ECVRF_prove(double *t, uint8_t pi[80], const uint8_t SK_bytes[32],
   ge_scalarmult_base(&Y, nonce);
   ge_p3_tobytes(kB_bytes, &Y);
 
-  *t = (double)clock(); // LC: delete this
   double_scalar_fixed_point_mult(kH_bytes, G_bytes, &H, nonce, truncatedHash);
-  *t = (double)clock()-(*t); // LC: delete this
   //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
 
   SHA512_Init(&c_ctx);
@@ -1199,6 +1197,14 @@ static void ECVRF_prove(double *t, uint8_t pi[80], const uint8_t SK_bytes[32],
 
   OPENSSL_cleanse(hash, sizeof(hash));
   OPENSSL_cleanse(nonce, sizeof(nonce));
+  OPENSSL_cleanse(c_string, sizeof(c_string));
+  OPENSSL_cleanse(truncatedHash, sizeof(truncatedHash));
+  OPENSSL_cleanse(Y_bytes, sizeof(Y_bytes));
+  OPENSSL_cleanse(H_bytes, sizeof(H_bytes));
+  OPENSSL_cleanse(kB_bytes, sizeof(kB_bytes));
+  OPENSSL_cleanse(kH_bytes, sizeof(kH_bytes));
+  ge_p3_0(&Y);
+  ge_p3_0(&H);
 
 }
 
@@ -1223,13 +1229,15 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
     8.  If c and c' are equal, output ("VALID",
         ECVRF_proof_to_hash(pi_string)); else output "INVALID"
   */
+  static const uint8_t SUITE  = 0x04;
+  static const uint8_t TWO    = 0x02;
+  uint8_t cp_string[SHA512_DIGEST_LENGTH];
   uint8_t c[32], s[32], H_bytes[32], U_bytes[32], V_bytes[32];
+  SHA512_CTX cp_ctx;
   ge_p3 H, G, U, V, Y;
   ge_p2 U_p2;
     // LC: why not ge_frombytes_vartime -- why waste time on constant-time?
-  int status = ECVRF_decode_proof_vartime(&G, c, s, pi);
-
-  if(!status)
+  if(ECVRF_decode_proof_vartime(&G, c, s, pi) == -1)
     return 0;
 
   ECVRF_alpha_to_curve(&H, H_bytes, Y_bytes, alpha, alpha_len);
@@ -1244,10 +1252,6 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
 
   ge_p3_merge_two_tobytes(U_bytes, V_bytes, &U, &V); /* LC: This could be further sped up if we used vartime inversion, but not clear if worth implementing */
 
-  static const uint8_t SUITE  = 0x04;
-  static const uint8_t TWO    = 0x02;
-  uint8_t cp_string[SHA512_DIGEST_LENGTH] = {0};
-  SHA512_CTX cp_ctx;
   SHA512_Init(&cp_ctx);
   SHA512_Update(&cp_ctx, &SUITE, 1);
   SHA512_Update(&cp_ctx, &TWO, 1);
@@ -1261,5 +1265,8 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
   memset(cp, 0, 32);
   memcpy(cp, cp_string, 16);
 
-  return by_cmp(c, cp); /* This is the only piece of code from by_ that we seem to be using. Should we eliminate by_ competely? */
+  for(uint32_t i=0; i<32; i++)
+    if(c[i] != cp[i])
+      return 0;
+  return 1;
 }
