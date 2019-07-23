@@ -119,6 +119,8 @@ static void fe_sqrt_2(fe out)
  * Returns 0 if field element h is negative
  * Returns 1 if field element h is positive
  * LC: how is positive and negative defined?
+ * Sign of a field element defned as in
+ * "High-speed high-security signatures", D. Bernstein et al., 2007, Section 2.
  */
 static unsigned int fe_ispositive(const fe h)
 {
@@ -330,7 +332,7 @@ static void fe_fraction_sqrt_and_legendre(fe sqrt_helper, fe e, const fe w)
   /* l1 = l1 ** 4 = w ** (2 ** 252 - 4) */
   fe_sq(l1, l1);
   fe_sq(l1, l1);
-    
+
   /* sqrt_helper = w ** (2**252 - 3) */
   fe_mul(sqrt_helper, l1, w);
 
@@ -550,6 +552,8 @@ static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_
  * (X3:Y3:Z3:T3) = (X1:Y1:Z1:T1) + (X2:Y2:Z2:T2)
  *
  * Cost: 8M total
+ *
+ * "Twisted Edwards Curves Revisited", H. Hisil et al., Section 3.2
  */
 static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
 {
@@ -645,6 +649,12 @@ static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe U, const fe V, const fe Z)
 }
 
 /* LC: Either explain this algorithm or point to a paper where it is explained */
+/**
+ * Recovery formula for Montgomery y-Coordinate
+ *
+ * "Efficient Elliptic Curve Cryptosystems from a Scalar Multiplication Algorithms with Recovery
+ *  of the y-Coordinate on a Montgomery-Form Elliptic Curve", K. Okeya, K. Sakurai, 2001, Section 3
+ */
 static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], const uint8_t vb[32],
                                 const fe U1, const fe Z1, const fe U2, const fe Z2)
 {
@@ -674,6 +684,14 @@ static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], con
 }
 
 /* LC: Either explain this algorithm or point to a paper where it is explained */
+/**
+ * Montgomery Ladder
+ *
+ * Cost: 5M + 4S + 1C
+ *
+ * "Speeding the Pollard and Elliptic Curve Methods of Factorization", P. Montgomery, Section 10.
+ * "Montgomery curves and the Montgomery ladder", D. Bernstein, T. Lange, 2017. Section 4.6
+ */
 static void montgomery_ladder(fe out_u2[32], fe out_z2[32], fe out_u3[32], fe out_z3[32],
                                        const uint8_t scalar[32], size_t scalar_len, const uint8_t in_u[32])
 {
@@ -778,8 +796,8 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
  * (more precisely, 514 squarings and 47 multplications, with fe_inverse and fe_fraction_sqrt_and_legendre taking up most of the time) */
 static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32], const fe r)
 {
-    fe A, A_cubed, e, one, sqrt2, sqrtnAp2, v, v2 y;
-    fe new_numerator, numerator, t0, t1, t2, t3, recip, recip2, denom, denom_cubed, denom7, recip21, minvert;
+    fe A, A_cubed, e, one, sqrt2, sqrtnAp2, v, v2, y;
+    fe new_numerator, numerator, t0, t1, t2, t3, recip, recip2, denom, denom_cubed, denom7, minvert;
     unsigned int b;
     ge_p1p1 p1p1;
     ge_p2 p2;
@@ -790,7 +808,7 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     fe_sq2(t0, r);
     /* recip = 1 + 2 * (r ** 2) */
     fe_add(recip, one, t0);
-    
+
     /* We want to evaluate the montgomery curve equation w = u (u**2 + Au + 1) for u = -A/recip
        Expressing this equation as a fraction, via a common denominator, we have
        w = ([(recip - 1) * A ** 3] - [A * recip ** 2]) / recip ** 3 */
@@ -803,10 +821,12 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
 
     /* denom = recip ** 3, i.e., the denominator of w */
     fe_mul(denom, recip2, recip);
-    
-    /* We now have the numerator and the denominator of w. We need to evaluate the Legendre of w and takes its square root to get v
-     (or the square root of the related value LC: which one??? if Legendre is -1). To avoid inversion, we will evaluate Legendre of
-       of numerator * denom**7 (which is the same as Legendre of w = numerator / denom); this will also help us with square root. */
+
+    /* We now have the numerator and the denominator of w. We need to evaluate the Legendre of w and take its square root to get v
+     (or the square root of the related value LC: which one??? PN: We always take sqrt of the same value, if Legendre is -1 then we multiply this sqrt by sqrt(2)*r).
+      To avoid inversion, we will evaluate Legendre of numerator * denom**7 (which is the same as Legendre of w = numerator / denom); this will also help us with square root.
+      ^ This trick is described by Bernstein et al. in "High-speed high-security signatures" in Sec. 5. It is easy to see that the Legendre can also be acquired from that routine.
+    */
 
     /* denom_cubed = denom ** 3 */
     /* denom7 = denom ** 7 */
@@ -820,7 +840,7 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
 
     /* (t1, e) = (t0 ** ((p-5)/8), legendre(t0) = legendre(w)) */
     fe_fraction_sqrt_and_legendre(t1, e, t0);
-    
+
     /* t1 = t1 * numerator * denom ** 3 = w ** ((p+3)/8) */
     /* (This equation works out because t0 = [numerator ** ((p-1)/8)] * [denom ** (7(p-1)/8)], and so
        t1 = [numerator ** ((p-1)/8+1)] * [denom ** (7(p-1)/8+3)]. Note that 7(p-1)/8+3 = (p-1)-(p+3)/8.
@@ -857,17 +877,17 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
      that doesn't seem to to be the case, because of an extra minus sign two lines above. So now I don't understand the meaning of v.
      LC: Can you explain what v is now? And can you explain how it relates to Elligator formulas?
      */
-    
+
     // (denom * v ** 2) != new_numerator:  v = v * sqrt(-1)
     fe_sq(v2, v);
     fe_mul(v2, v2, denom);
     b = fe_ispositive(v2) ^ fe_ispositive(new_numerator);
     fe_cmov(one, sqrtm1, b);
     fe_mul(v, v, one);
-    
+
     /* LC: can you explain what the Montgomery point is at this point in the code, even if you haven't computed it yet? */
     /* LC: can you explain what X, Y, Z, and T are? */
-     
+
     // (x, y) = (|X/Z|, Y/T) is the +/- Edwards curve point before cofactor clearing
     // x = (sqrt(A + 2) * t2) / (v * recip)
     // y = (t2 - recip) / (t2 + recip)
@@ -887,24 +907,20 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     ge_p2_dbl(&p1p1, &p2);
     ge_p1p1_to_p3(out_point, &p1p1);
 
-    // minvert = 1 / (v * Z * (Z - Y))
+    // minvert = 1 / (v * Z)
     fe_copy(minvert, v);
     fe_mul(minvert, minvert, out_point->Z);
-    fe_copy(t0, out_point->Z);
-    fe_sub(t0, t0, out_point->Y);
-    fe_mul(minvert, minvert, t0);
     fe_invert(minvert, minvert);
 
     // fix sign of 8(x, y) if (x, y) was negative
-    fe_mul(t1, minvert, t0);
-    fe_mul(t2, t1, out_point->Z);
+    fe_mul(t2, minvert, out_point->Z);
     fe_mul(t2, t2, sqrtnAp2);
     fe_neg(t3, out_point->X);
     fe_neg(t0, out_point->T);
     b = !fe_ispositive(t2);
     fe_cmov(out_point->X, t3, b);
     fe_cmov(out_point->T, t0, b);
-    fe_mul(t2, t1, v);
+    fe_mul(t2, minvert, v);
     fe_mul(t3, t2, out_point->Y);
     fe_mul(t2, t2, out_point->X);
     fe_tobytes(out_point_bytes, t3);
