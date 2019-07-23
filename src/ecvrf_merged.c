@@ -774,12 +774,12 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
  * p1p1        - Edwards point, completed system
  * p2          - Edwards point, projective system
  *
- * Cost per bit of r: approximately 2S + 0.2M (S = fe squaring, M = fe multiplication)
+ * Cost per bit of r: approximately 2S + 0.2M (S =  squaring, M = fe multiplication)
  * (more precisely, 514 squarings and 47 multplications, with fe_inverse and fe_fraction_sqrt_and_legendre taking up most of the time) */
 static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32], const fe r)
 {
     fe A, A_cubed, e, one, sqrt2, sqrtnAp2, v, v2 y;
-    fe new_numerator, numerator, t0, t1, t2, t3, recip, recip2, denom, denom_cubed, denom7, recip21, minvert;
+    fe new_numerator, numerator, t0, t1, t2, t3, recip, recip_squared, denom, denom_cubed, denom7, minvert;
     unsigned int b;
     ge_p1p1 p1p1;
     ge_p2 p2;
@@ -797,12 +797,12 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
 
     /* numerator = [(recip - 1) * A ** 3] - [A * recip ** 2], i.e., the numerator of w */
     fe_mul(numerator, t0, A_cubed);
-    fe_sq(recip2, recip);
-    fe_mul(t0, recip2, A);
+    fe_sq(recip_squared, recip);
+    fe_mul(t0, recip_squared, A);
     fe_sub(numerator, numerator, t0);
 
     /* denom = recip ** 3, i.e., the denominator of w */
-    fe_mul(denom, recip2, recip);
+    fe_mul(denom, recip_squared, recip);
     
     /* We now have the numerator and the denominator of w. We need to evaluate the Legendre of w and takes its square root to get v
      (or the square root of the related value LC: which one??? if Legendre is -1). To avoid inversion, we will evaluate Legendre of
@@ -824,13 +824,17 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     /* t1 = t1 * numerator * denom ** 3 = w ** ((p+3)/8) */
     /* (This equation works out because t0 = [numerator ** ((p-1)/8)] * [denom ** (7(p-1)/8)], and so
        t1 = [numerator ** ((p-1)/8+1)] * [denom ** (7(p-1)/8+3)]. Note that 7(p-1)/8+3 = (p-1)-(p+3)/8.
-       So denom ** (7(p-1)/8+3) = [denom ** (p-1)] * [denom ** (-(p+3)/8)] =
-       = 1 / [denom ** ((p+3)/8)].
+       So denom ** (7(p-1)/8+3) = [denom ** (p-1)] * [denom ** (-(p+3)/8)] = 1 / [denom ** ((p+3)/8)].
      */
     fe_mul(t1, t1, numerator);
     fe_mul(t1, t1, denom_cubed);
 
     /* Note that now t1 ** 4 = w ** ((p+3)/2) = [w ** ((p-1)/2)] * [w ** 2] = e * [w ** 2] */
+    
+    /* If e == 1, we will keep the same u and w.
+       If e == -1, then we will replace u by 2 * r**2 * u (== -A-u) and replace w by 2 * r**2 * w.
+       Either way, we need the square root of w to get v (also known as "montgomery y coordinate"), which we will obtain from t1.
+     */
 
     /* e ==  1:  (t2, new_numerator) = (-A, numerator) */
     /* e == -1:  (t2, new_numerator) = (A(1 - recip), (2 * r ** 2) * numerator) */
