@@ -872,7 +872,6 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
     /* If v ** 2 has a different sign from new_w (= new_w_numerator / w_denom), then  v = v * sqrt(-1) */
     fe_sq(v_squared, v);
     fe_mul(v_squared, v_squared, w_denom);
-    /* I think you can just look at the very last bit of each and see if they are equal -- but I am not sure b/c of the specific field encoding used */
     b = fe_ispositive(v_squared) ^ fe_ispositive(new_w_numerator);
     fe_cmov(one, sqrtm1, b);
     fe_mul(v, v, one);
