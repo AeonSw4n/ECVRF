@@ -2,9 +2,14 @@
 #include <stdio.h>
 #include <time.h>
 
-/* Should all curve point variables be named with capital letters? In some places it's lowercase, others it's uppercase.
-   If it's lowercase then scalar multiples look odd.
-*/
+/**
+ * Approximate running time costs are indicated for most of the expensive functions in this file,
+ * using S for fe squaring, M for fe multiplication, and C for multiplying by a short constant (in our case, fe_mul121666).
+ * Note that 1S is approximately 0.8M, and 1C is much cheaper.
+ * Other operations are much cheaper and are generally ignored in the cost calculation.
+ * If an estimate indiciates that the cost is "per bit," then the actual cost for the function is about
+ * 256 times the per bit cost.
+ */
 
 /**
  * Returns, via parameter out, a field element equal to
@@ -45,7 +50,7 @@ static void fe_2A(fe out)
 
 /**
  * Returns, via parameter out, a field element equal to
- * A^3, where A = 48662 is the coefficient in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
+ * A^3, where A = 486662 is the coefficient in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
  */
 static void fe_A_cubed(fe out)
 {
@@ -61,32 +66,10 @@ static void fe_A_cubed(fe out)
   out[9] = 0;
 }
 
-/**
- * LC: It seems this function is not needed
- * Returns, via parameter out, a field element equal to the
- * positive square root of A + 2 (= 486664), i.e. (A + 2)^{2^{252}-2} mod p (where p = 2^{255}-19)
- * A = 48662 is the value from the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
- * LC: (a) how is "positive" defined and (b) are we sure (A + 2)^{2^{252}-2} mod p is positive and not negative?
- * LC: if we are not sure about (b), just omit that part of the comment, and simply leave "positive square root" and
- * LC: an explanation of how "positive" is defined
- * LC: in fact, we probably don't care if it's positive or negative
- */
-static void fe_sqrt_A_plus_2(fe out)
-{
-  out[0] = -8930344;
-  out[1] = -9583591;
-  out[2] = 26444492;
-  out[3] = -3752533;
-  out[4] = -26044487;
-  out[5] = 743697;
-  out[6] = 2900628;
-  out[7] = -5634116;
-  out[8] = -25139868;
-  out[9] = 5270574;
-}
 
 /**
- * LC: this needs a header like fe_sqrt_A_plus_2
+ * Returns, via parameter out, a field element equal to the positive
+ * square root of -A - 2 (= -486664) mod p, where p = 2**255 - 19
  */
 static void fe_sqrt_neg_A_plus_2(fe out)
 {
@@ -104,8 +87,7 @@ static void fe_sqrt_neg_A_plus_2(fe out)
 
 /**
  * Returns, via parameter out, a field element equal to the
- * fourth root of -4; specifically 2^{2^{252}-2} mod p (where p = 2^{255}-19)
- * LC: could you double check that this really is computed as 2^{2^{252}-2} mod p?
+ * fourth root of -4, computed as 2**((p+3)/8) = 2**(2**252-2)
  */
 static void fe_fourth_root_of_neg_4(fe out)
 {
@@ -124,9 +106,10 @@ static void fe_fourth_root_of_neg_4(fe out)
 /**
  * Returns 0 if field element h is negative
  * Returns 1 if field element h is positive
- * LC: how is positive and negative defined?
- * Sign of a field element defned as in
- * "High-speed high-security signatures", D. Bernstein et al., 2007, Section 2.
+ * Elements 1, 3, 5, 7, ..., are "negative" and elements 2, 4, 6, 8, ... are "positive"
+ * Reference:
+ * Section 2 of "High-speed high-security signatures", D. Bernstein et al., 2007,
+ * https://ed25519.cr.yp.to/ed25519-20110705.pdf
  */
 static unsigned int fe_ispositive(const fe h)
 {
@@ -155,12 +138,13 @@ static unsigned int fe_ispositive(const fe h)
   q = (h9 + q) >> 25;
 
   h0 += 19 * q;
-  h0 &= kBottom26Bits;
-  return !(unsigned int) ((uint8_t)(h0) & 1);
+  return !(unsigned int) (h0 & 1);
 }
 
-// this will be changed when dif bases added
-static void fe_mul121666(fe h, fe f)
+#if defined (BASE_2_51_IMPLEMENTED)
+/* This is neededed because when BASE_2_51_IMPLEMENTED is defined, this function in curve25519.c disappears */
+/* h = 121666*f */
+static void fe_mul121666(fe h, const fe f)
 {
     int32_t f0 = f[0];
     int32_t f1 = f[1];
@@ -217,7 +201,15 @@ static void fe_mul121666(fe h, fe f)
     h[9] = (int32_t)h9;
 }
 
-// this will be changed when dif bases added
+
+/* This is neededed because when BASE_2_51_IMPLEMENTED is defined, this function in curve25519.c disappears */
+/**
+ * Conditional swap.
+ * (f, g) := (f, g)  if b == 0
+ * (f, g) := (g, f)  if b == 1
+ *
+ * Preconditions: b in {0,1}.
+ */
 static void fe_cswap(fe f, fe g, unsigned int b)
 {
     size_t i;
@@ -230,6 +222,8 @@ static void fe_cswap(fe f, fe g, unsigned int b)
         g[i] ^= x;
     }
 }
+#endif
+
 
 /**
  * Compute the Legendre symbol e of w as
@@ -242,6 +236,8 @@ static void fe_cswap(fe f, fe g, unsigned int b)
  * if w = n * (d**7), this value helps us compute the square root of
  * of n/d, because sqrt_helper * n * (d ** 3) = (n/d)**((p+3)/8),
  * (because 7(p-5)/8+3 = (p-1)-(p+3)/8, and d ** (p-1) = 1).
+ *
+ * Cost: 1S per bit
  */
 static void fe_fraction_sqrt_and_legendre(fe sqrt_helper, fe e, const fe w)
 {
@@ -423,7 +419,7 @@ static void ge_p3_neg(ge_p3 *r, const ge_p3 *p)
 
 /**
  * Retrieve extended Edwards point from bytes in constant time
- *
+ * Similar to ge_frombytes_vartime in curve25519.c
  * Cost: 1S per bit
  */
 static int ge_p3_frombytes(ge_p3 *h, const uint8_t s[32])
@@ -485,13 +481,13 @@ static int ge_p3_frombytes(ge_p3 *h, const uint8_t s[32])
 }
 
 /**
- * Merge inversions in two tobytes to save time.
+ * Convert p and q to bytes; combine inversions in two tobytes to save time.
  * out1 <-- p
  * out2 <-- q
  *
  * Cost: 1S per bit
  */
-static void ge_p3_merge_two_tobytes(uint8_t out1[32], uint8_t out2[32],
+static void ge_p3_two_tobytes(uint8_t out1[32], uint8_t out2[32],
                                 const ge_p3 *p, const ge_p3 *q)
 {
   fe x, y, recip;
@@ -513,14 +509,14 @@ static void ge_p3_merge_two_tobytes(uint8_t out1[32], uint8_t out2[32],
 }
 
 /**
- * Merge inversions in three tobytes to save time.
+ * Convert three points to bytes; combine three inversions into one to save time.
  * out1 <-- p
  * out2 <-- q
  * out3 <-- r
  *
  * Cost: 1S per bit
  */
-static void ge_p3_merge_three_tobytes(uint8_t out1[32], uint8_t out2[32], uint8_t out3[32],
+static void ge_p3_three_tobytes(uint8_t out1[32], uint8_t out2[32], uint8_t out3[32],
                                 const ge_p3 *p, const ge_p3 *q, const ge_p3 *r)
 {
   fe x, y, recip;
@@ -551,15 +547,15 @@ static void ge_p3_merge_three_tobytes(uint8_t out1[32], uint8_t out2[32], uint8_
   out3[31] ^= fe_isnegative(x) << 7;
 }
 
-/* LC: Either explain this algorithm or point to a paper where it is explained */
 /**
- * Merged two birational maps from extended Twisted Edwards to affine Montgomery to save time.
+ * Combine two birational maps from extended Twisted Edwards to affine Montgomery to save time.
+ * LC: write the conversion formula here
  * (u1, v1) <-- p
  * (u2, v2) <-- q
  *
  * Cost: 1S per bit
  */
-static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_t u2[32], uint8_t v2[32],
+static void ge_p3_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_t u2[32], uint8_t v2[32],
                                               const ge_p3 *p, const ge_p3 *q)
 {
     fe sqrtnAp2, up, uq, t0, t1, t2, t3, t4, t5;
@@ -597,10 +593,12 @@ static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_
     fe_mul(t5, t5, q->Z);
     fe_mul(t5, t5, sqrtnAp2);
     fe_tobytes(v2, t5);
+    /* LC: Does cleansing has to happen??? Here and elsewhere */
 }
 
 /**
- * Dedicated / Dual Edwards addition
+ * Dedicated (also known as Dual) Edwards addition
+ * LC: Works only if the points are ....
  * r = p + q
  *
  * Cost: 8M
@@ -632,16 +630,20 @@ static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
     fe_mul(r->Y, G, H);         /* 16.  Y3 = G * H                  */
     fe_mul(r->T, E, H);         /* 17.  T3 = E * H                  */
     fe_mul(r->Z, F, G);         /* 18.  Z3 = F * G                  */
+    /* LC: Does cleansing has to happen??? */
 }
 
 /**
- * (P, Q) = (nH, mH)
+ * (p, q) = (nH, mH), where scalar1 is n and scalar2 is m
+ *
+ * LC: write down preconditions  the scalars, if any
  *
  * Cost: 12M + 4S + 1C per bit
  */
 static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
                                   const uint8_t scalar1[32], const uint8_t scalar2[32])
 {
+    
   ge_p3 sum[4];
   ge_p1p1 tp1;
   ge_cached tca;
@@ -657,8 +659,21 @@ static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
   ge_p3 P;
   ge_p3_copy(&P, H);
 
-  /* Avoids using secret array indices by carrying three point swaps each interation. Supplementary index array is used to put sum[b1 + 2*b2] in sum[0].
-     In an environment where side-channel attacks are not a threat this could be avoided by referring to sum[b1 + 2*b2] right away. */
+  /* At the ith iteration of the loop below, P = 2^i * H
+   * We maintain four sums and add P to one of the four sums depending on the i-th bit of the two scalars:
+   * s0 (throwaway sum, for constant-time) if both ith bits are 0
+   * s1 if the ith bits of scalar2 and scalar1 are 01
+   * s2 if the ith bits of scalar2 and scalar1 are 10
+   * s3 if both ith bits are 1
+   */
+    
+  /* In order to avoid indexing into an array based on the of the scalar (to prevent secret array indexes side-channel attack),
+   * we swap the correct sj into sum[0] using cswaps based on the bits of the scalar.
+   * This requires us to maintain a second array, called index, which keeps track of which s is where in the sum array.
+   * Specifically, sj lives in sum[index[j]]
+   * In an environment where side-channel attacks are not a threat this could be avoided by referring to s[b1 + 2*b2] right away.
+   */
+    
   for(pos = 0; pos < 255; ++pos){
     unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
     unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
@@ -669,13 +684,14 @@ static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
       cswap(&index[i], &index[i+1], b);
     }
 
-    ge_dedicated_add(&sum[0], &sum[0], &P);
+    ge_dedicated_add(&sum[0], &sum[0], &P); // LC: we can use dedicated add here because???
 
     ge_p3_dbl(&tp1, &P);
     ge_p1p1_to_p3(&P, &tp1);
 
   }
 
+  /* This loop puts sj into sum[j] */
   for(int i=0; i<3; i++){
     for(int j=2; j>=i; j--){
       unsigned int b;
@@ -688,7 +704,11 @@ static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
   ge_dedicated_add(p, &sum[1], &sum[3]);
   ge_dedicated_add(q, &sum[2], &sum[3]);
 
-  OPENSSL_cleanse(index, sizeof(index));
+  /* Cleanse temporary values */
+  for(pos = 0; pos < 4; pos++){
+    ge_p3_0(&sum[pos]);
+  }
+  ge_p3_0(&P); /* LC: Other cleansing has to happen!!! */
 }
 
 /**
@@ -840,7 +860,7 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
   ge_cached s2_q_cached;
   ge_p1p1 r_p1p1;
   ge_p3 s1_p, s2_q;
-  ge_p3_merge_two_to_montgomery(p_u, p_v, q_u, q_v, p, q);
+  ge_p3_two_to_montgomery(p_u, p_v, q_u, q_v, p, q);
   montgomery_ladder_scalar_mult(&s1_p, scalar1, scalar1_len, p_u, p_v);
   montgomery_ladder_scalar_mult(&s2_q, scalar2, scalar2_len, q_u, q_v);
   ge_p3_to_cached(&s2_q_cached, &s2_q);
@@ -1203,7 +1223,7 @@ static void ECVRF_prove(uint8_t pi[80], const uint8_t SK_bytes[32],
   ge_scalarmult_base(&kB, nonce);
 
   double_scalar_fixed_point_mult(&kH, &G, &H, nonce, truncatedHash);
-  ge_p3_merge_three_tobytes(kB_bytes, kH_bytes, G_bytes, &kB, &kH, &G);
+  ge_p3_three_tobytes(kB_bytes, kH_bytes, G_bytes, &kB, &kH, &G);
   //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
 
   SHA512_Init(&c_ctx);
@@ -1285,7 +1305,7 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
     /* LC: explain why we choose montgomery algorithm here but edwards algorithm in the previous line */
   montgomery_double_scalar_mult_difference(&V, &H, &G, s, 32, c, 16);
 
-  ge_p3_merge_two_tobytes(U_bytes, V_bytes, &U, &V); /* LC: This could be further sped up if we used vartime inversion, but not clear if worth implementing */
+  ge_p3_two_tobytes(U_bytes, V_bytes, &U, &V); /* LC: This could be further sped up if we used vartime inversion, but not clear if worth implementing */
 
   SHA512_Init(&cp_ctx);
   SHA512_Update(&cp_ctx, &SUITE, 1);
