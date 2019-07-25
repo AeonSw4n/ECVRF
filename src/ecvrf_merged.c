@@ -2,6 +2,10 @@
 #include <stdio.h>
 #include <time.h>
 
+/* Should all curve point variables be named with capital letters? In some places it's lowercase, others it's uppercase.
+   If it's lowercase then scalar multiples look odd.
+*/
+
 /**
  * Returns, via parameter out, a field element equal to
  * A, where A = 48662 is the coefficient in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
@@ -419,7 +423,7 @@ static void ge_p3_neg(ge_p3 *r, const ge_p3 *p)
 /**
  * Retrieve extended Edwards point from bytes in constant time
  *
- * Approcimate cost: 1S per bit (where S is the cost of fe squaring)
+ * Cost: 1S per bit
  */
 static int ge_p3_frombytes(ge_p3 *h, const uint8_t s[32])
 {
@@ -480,11 +484,11 @@ static int ge_p3_frombytes(ge_p3 *h, const uint8_t s[32])
 }
 
 /**
- * Merge two tobytes using the multiplication trick
+ * Merge inversions in two tobytes to save time.
  * out1 <-- p
  * out2 <-- q
  *
- * Cost: 1S
+ * Cost: 1S per bit
  */
 static void ge_p3_merge_two_tobytes(uint8_t out1[32], uint8_t out2[32],
                                 const ge_p3 *p, const ge_p3 *q)
@@ -507,7 +511,53 @@ static void ge_p3_merge_two_tobytes(uint8_t out1[32], uint8_t out2[32],
   out2[31] ^= fe_isnegative(x) << 7;
 }
 
+/**
+ * Merge inversions in three tobytes to save time.
+ * out1 <-- p
+ * out2 <-- q
+ * out3 <-- r
+ *
+ * Cost: 1S per bit
+ */
+static void ge_p3_merge_three_tobytes(uint8_t out1[32], uint8_t out2[32], uint8_t out3[32],
+                                const ge_p3 *p, const ge_p3 *q, const ge_p3 *r)
+{
+  fe x, y, recip;
+
+  fe_mul(recip, p->Z, q->Z);
+  fe_mul(recip, recip, r->Z);
+  fe_invert(recip, recip);
+
+  fe_mul(x, recip, q->Z);
+  fe_mul(x, x, r->Z);
+  fe_mul(y, p->Y, x);
+  fe_mul(x, p->X, x);
+  fe_tobytes(out1, y);
+  out1[31] ^= fe_isnegative(x) << 7;
+
+  fe_mul(x, recip, p->Z);
+  fe_mul(x, x, r->Z);
+  fe_mul(y, q->Y, x);
+  fe_mul(x, q->X, x);
+  fe_tobytes(out2, y);
+  out2[31] ^= fe_isnegative(x) << 7;
+
+  fe_mul(x, recip, p->Z);
+  fe_mul(x, x, q->Z);
+  fe_mul(y, r->Y, x);
+  fe_mul(x, r->X, x);
+  fe_tobytes(out3, y);
+  out3[31] ^= fe_isnegative(x) << 7;
+}
+
 /* LC: Either explain this algorithm or point to a paper where it is explained */
+/**
+ * Merged two birational maps from extended Twisted Edwards to affine Montgomery to save time.
+ * (u1, v1) <-- p
+ * (u2, v2) <-- q
+ *
+ * Cost: 1S per bit
+ */
 static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_t u2[32], uint8_t v2[32],
                                               const ge_p3 *p, const ge_p3 *q)
 {
@@ -549,45 +599,47 @@ static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_
 }
 
 /**
- * dedicated / dual Edwards addition
+ * Dedicated / Dual Edwards addition
  * r = p + q
- * (X3:Y3:Z3:T3) = (X1:Y1:Z1:T1) + (X2:Y2:Z2:T2)
  *
  * Cost: 8M total
  *
- * "Twisted Edwards Curves Revisited", H. Hisil et al., Section 3.2
+ * Reference:
+ * Section 3.2 of "Twisted Edwards Curves Revisited", H. Hisil et al.
+ * https://iacr.org/archive/asiacrypt2008/53500329/53500329.pdf
  */
 static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
 {
+    /* (X3:Y3:Z3:T3) = (X1:Y1:Z1:T1) + (X2:Y2:Z2:T2) */
     fe A, B, C, D, E, F, G, H;
 
-    fe_sub(A, p->Y, p->X);      //  1.  A = (Y1 - X1)
-    fe_add(B, q->Y, q->X);      //  2.  B = (Y2 + X2)
-    fe_mul(A, A, B);            //  3.  A = (Y1 - X1) * (Y2 + X2)
-    fe_add(B, p->Y, p->X);      //  4.  B = (Y1 + X1)
-    fe_sub(C, q->Y, q->X);      //  5.  C = (Y2 - X2)
-    fe_mul(B, B, C);            //  6.  B = (Y1 + X1) * (Y2 - X2)
-    fe_add(C, p->Z, p->Z);      //  7.  C = 2 Z1
-    fe_mul(C, C, q->T);         //  8.  C = 2 Z1 * T2
-    fe_add(D, p->T, p->T);      //  9.  D = 2 T1
-    fe_mul(D, D, q->Z);         // 10.  D = 2 T1 * Z2
-    fe_add(E, D, C);            // 11.  E = D + C
-    fe_sub(F, B, A);            // 12.  F = B - A
-    fe_add(G, B, A);            // 13.  G = B + A
-    fe_sub(H, D, C);            // 14.  H = D - C
-    fe_mul(r->X, E, F);         // 15.  X3 = E * F
-    fe_mul(r->Y, G, H);         // 16.  Y3 = G * H
-    fe_mul(r->T, E, H);         // 17.  T3 = E * H
-    fe_mul(r->Z, F, G);         // 18.  Z3 = F * G
+    fe_sub(A, p->Y, p->X);      /*  1.  A = (Y1 - X1)               */
+    fe_add(B, q->Y, q->X);      /*  2.  B = (Y2 + X2)               */
+    fe_mul(A, A, B);            /*  3.  A = (Y1 - X1) * (Y2 + X2)   */
+    fe_add(B, p->Y, p->X);      /*  4.  B = (Y1 + X1)               */
+    fe_sub(C, q->Y, q->X);      /*  5.  C = (Y2 - X2)               */
+    fe_mul(B, B, C);            /*  6.  B = (Y1 + X1) * (Y2 - X2)   */
+    fe_add(C, p->Z, p->Z);      /*  7.  C = 2 Z1                    */
+    fe_mul(C, C, q->T);         /*  8.  C = 2 Z1 * T2               */
+    fe_add(D, p->T, p->T);      /*  9.  D = 2 T1                    */
+    fe_mul(D, D, q->Z);         /* 10.  D = 2 T1 * Z2               */
+    fe_add(E, D, C);            /* 11.  E = D + C                   */
+    fe_sub(F, B, A);            /* 12.  F = B - A                   */
+    fe_add(G, B, A);            /* 13.  G = B + A                   */
+    fe_sub(H, D, C);            /* 14.  H = D - C                   */
+    fe_mul(r->X, E, F);         /* 15.  X3 = E * F                  */
+    fe_mul(r->Y, G, H);         /* 16.  Y3 = G * H                  */
+    fe_mul(r->T, E, H);         /* 17.  T3 = E * H                  */
+    fe_mul(r->Z, F, G);         /* 18.  Z3 = F * G                  */
 }
 
 /**
- * Calculate (out1, out2) = (scalar1 * H, scalar2 * H) in constant time
+ * (P, Q) = (nH, mH)
  *
- * Cost: 12M + 4S + 1C per bit of scalar
+ * Cost: 12M + 4S + 1C per bit
  */
-static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32],
-                        const ge_p3 *H, const uint8_t scalar1[32], const uint8_t scalar2[32])
+static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
+                                  const uint8_t scalar1[32], const uint8_t scalar2[32])
 {
   ge_p3 sum[4];
   ge_p1p1 tp1;
@@ -604,7 +656,8 @@ static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32],
   ge_p3 P;
   ge_p3_copy(&P, H);
 
-
+  /* Avoids using secret array indices by carrying three point swaps each interation. Supplementary index array is used to put sum[b1 + 2*b2] in sum[0].
+     In an environment where side-channel attacks are not a threat this could be avoided by refering to sum[b1 + 2*b2] right away. */
   for(pos = 0; pos < 255; ++pos){
     unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
     unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
@@ -631,24 +684,26 @@ static void double_scalar_fixed_point_mult(uint8_t out1[32], uint8_t out2[32],
     }
   }
 
-  ge_dedicated_add(&sum[1], &sum[1], &sum[3]);
-  ge_dedicated_add(&sum[2], &sum[2], &sum[3]);
-
-  ge_p3_merge_two_tobytes(out1, out2, &sum[1], &sum[2]);
+  ge_dedicated_add(p, &sum[1], &sum[3]);
+  ge_dedicated_add(q, &sum[2], &sum[3]);
 
   OPENSSL_cleanse(index, sizeof(index));
 }
 
-static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe U, const fe V, const fe Z)
+/**
+ * Birational map from projective Montgomery to extended Twisted Edwards
+ * r <-- (u : v : z)
+ */
+static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe u, const fe v, const fe z)
 {
     fe t0, sqrtnAp2;
     ge_p1p1 p;
     fe_sqrt_neg_A_plus_2(sqrtnAp2);
-    fe_add(t0, U, Z);
-    fe_mul(p.X, U, sqrtnAp2);
-    fe_copy(p.Z, V);
-    fe_sub(p.Y, U, Z);
-    fe_add(p.T, U, Z);
+    fe_add(t0, u, z);
+    fe_mul(p.X, u, sqrtnAp2);
+    fe_copy(p.Z, v);
+    fe_sub(p.Y, u, z);
+    fe_add(p.T, u, z);
     ge_p1p1_to_p3(r, &p);
 }
 
@@ -656,8 +711,10 @@ static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe U, const fe V, const fe Z)
 /**
  * Recovery formula for Montgomery y-Coordinate
  *
- * "Efficient Elliptic Curve Cryptosystems from a Scalar Multiplication Algorithms with Recovery
- *  of the y-Coordinate on a Montgomery-Form Elliptic Curve", K. Okeya, K. Sakurai, 2001, Section 3
+ * Reference:
+ * Section 3 of "Efficient Elliptic Curve Cryptosystems from a Scalar Multiplication Algorithms with Recovery
+ *  of the y-Coordinate on a Montgomery-Form Elliptic Curve", K. Okeya, K. Sakurai, CHES 2001
+ * https://link.springer.com/content/pdf/10.1007/3-540-44709-1_12.pdf
  */
 static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], const uint8_t vb[32],
                                 const fe U1, const fe Z1, const fe U2, const fe Z2)
@@ -690,11 +747,16 @@ static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], con
 /* LC: Either explain this algorithm or point to a paper where it is explained */
 /**
  * Montgomery Ladder
+ * Outputs Montgomery u-coodrinates of points [nP, (n+1)P] as fractions
  *
- * Cost: 5M + 4S + 1C
+ * Cost: 5M + 4S + 1C per bit
  *
- * "Speeding the Pollard and Elliptic Curve Methods of Factorization", P. Montgomery, Section 10.
- * "Montgomery curves and the Montgomery ladder", D. Bernstein, T. Lange, 2017. Section 4.6
+ * References:
+ * Section 10. of "Speeding the Pollard and Elliptic Curve Methods of Factorization", P. Montgomery
+ *  https://www.ams.org/journals/mcom/1987-48-177/S0025-5718-1987-0866113-7/S0025-5718-1987-0866113-7.pdf
+ *
+ * Section 4.6 of "Montgomery curves and the Montgomery ladder", D. Bernstein, T. Lange, 2017.
+ *  https://eprint.iacr.org/2017/293.pdf
  */
 static void montgomery_ladder(fe out_u2, fe out_z2, fe out_u3, fe out_z3,
                                        const uint8_t scalar[32], const size_t scalar_len, const uint8_t in_u[32])
@@ -745,9 +807,13 @@ static void montgomery_ladder(fe out_u2, fe out_z2, fe out_u3, fe out_z3,
 
 
     OPENSSL_cleanse(u1, sizeof(u1));
-    OPENSSL_cleanse(e, sizeof(e)); /* LC: How do we decide when cleanse is needed? */
+    OPENSSL_cleanse(e, sizeof(e));
 }
 
+/**
+ * Montgomery Ladder
+ * Outputs scalar multiple of a Montgomery point (u, v) as a point on Twisted Edwards curve25519
+ */
 static void montgomery_ladder_scalar_mult(ge_p3 *r, const uint8_t *scalar, const size_t scalar_len,
                                                   const uint8_t u[32], const uint8_t v[32])
 {
@@ -758,17 +824,24 @@ static void montgomery_ladder_scalar_mult(ge_p3 *r, const uint8_t *scalar, const
   montgomery_p2_to_ge_p3(r, u_rec, v_rec, z_rec);
 }
 
+/**
+ * R = nP - mQ
+ * Performs two Montgomery Ladders. Saves the cost of switching between curves by merging inversions.
+ *
+ * Cost: 10M + 9S + 2C per bit
+ * Inversion has a similar cost to 1S per bit.
+ */
 static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, const ge_p3 *q,
-                                                  const uint8_t *s1, const size_t s1_len,
-                                                  const uint8_t *s2, const size_t s2_len)
+                                                  const uint8_t *scalar1, const size_t scalar1_len,
+                                                  const uint8_t *scalar2, const size_t scalar2_len)
 {
   uint8_t p_u[32], p_v[32], q_u[32], q_v[32];
   ge_cached s2_q_cached;
   ge_p1p1 r_p1p1;
   ge_p3 s1_p, s2_q;
   ge_p3_merge_two_to_montgomery(p_u, p_v, q_u, q_v, p, q);
-  montgomery_ladder_scalar_mult(&s1_p, s1, s1_len, p_u, p_v);
-  montgomery_ladder_scalar_mult(&s2_q, s2, s2_len, q_u, q_v);
+  montgomery_ladder_scalar_mult(&s1_p, scalar1, scalar1_len, p_u, p_v);
+  montgomery_ladder_scalar_mult(&s2_q, scalar2, scalar2_len, q_u, q_v);
   ge_p3_to_cached(&s2_q_cached, &s2_q);
   ge_sub(&r_p1p1, &s1_p, &s2_q_cached);
   ge_p1p1_to_p3(r, &r_p1p1);
@@ -959,25 +1032,6 @@ static void ECVRF_alpha_to_curve(ge_p3 *out_point, uint8_t out_point_bytes[32],
 
 static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_t* pi)
 {
-  /*
-
-
-    2.  let c_string = pi_string[ptLen]...pi_string[ptLen+n-1]
-
-    3.  let s_string =pi_string[ptLen+n]...pi_string[ptLen+n+qLen-1]
-
-    4.  Gamma = string_to_point(gamma_string)
-
-    5.  if Gamma = "INVALID" output "INVALID" and stop.
-
-    6.  c = string_to_int(c_string)
-
-    7.  s = string_to_int(s_string)
-
-    8.  Output Gamma, c, and s
-  */
-
-  // 1.  let gamma_string = pi_string[0]...p_string[ptLen-1]
   uint8_t gamma_string[32];
   memcpy(gamma_string, pi, 32);
 
@@ -989,30 +1043,10 @@ static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_
   memcpy(s, pi+48, 32);
 
   return status;
-
 }
 
 static int ECVRF_decode_proof_vartime(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_t* pi)
 {
-  /*
-
-
-    2.  let c_string = pi_string[ptLen]...pi_string[ptLen+n-1]
-
-    3.  let s_string =pi_string[ptLen+n]...pi_string[ptLen+n+qLen-1]
-
-    4.  Gamma = string_to_point(gamma_string)
-
-    5.  if Gamma = "INVALID" output "INVALID" and stop.
-
-    6.  c = string_to_int(c_string)
-
-    7.  s = string_to_int(s_string)
-
-    8.  Output Gamma, c, and s
-  */
-
-  // 1.  let gamma_string = pi_string[0]...p_string[ptLen-1]
   uint8_t gamma_string[32];
   memcpy(gamma_string, pi, 32);
 
@@ -1025,7 +1059,6 @@ static int ECVRF_decode_proof_vartime(ge_p3 *Gamma, uint8_t *c, uint8_t *s, cons
   memcpy(s, pi+48, 32);
 
   return 1;
-
 }
 
 static int ECVRF_proof_to_hash(uint8_t *beta, const uint8_t *pi)
@@ -1136,15 +1169,13 @@ static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
 static void ECVRF_prove(uint8_t pi[80], const uint8_t SK_bytes[32],
                     const uint8_t* alpha, const size_t alpha_len)
 {
-
-  //1.  Use SK to derive the VRF secret scalar x and the VRF public key Y = x*B
   SHA512_CTX hash_ctx, nonce_ctx, c_ctx;
   const uint8_t SUITE  = 0x04;
   const uint8_t TWO    = 0x02;
   uint8_t hash[SHA512_DIGEST_LENGTH], nonce[SHA512_DIGEST_LENGTH], c_string[SHA512_DIGEST_LENGTH];
   uint8_t Y_bytes[32], H_bytes[32], G_bytes[32], kB_bytes[32], kH_bytes[32];
   uint8_t c[32], s[32], truncatedHash[32];
-  ge_p3 Y, H;
+  ge_p3 Y, H, kB, kH, G;
 
   SHA512_Init(&hash_ctx);
   SHA512_Update(&hash_ctx, SK_bytes, 32);
@@ -1168,10 +1199,10 @@ static void ECVRF_prove(uint8_t pi[80], const uint8_t SK_bytes[32],
 
 
   x25519_sc_reduce(nonce);
-  ge_scalarmult_base(&Y, nonce);
-  ge_p3_tobytes(kB_bytes, &Y);
+  ge_scalarmult_base(&kB, nonce);
 
-  double_scalar_fixed_point_mult(kH_bytes, G_bytes, &H, nonce, truncatedHash);
+  double_scalar_fixed_point_mult(&kH, &G, &H, nonce, truncatedHash);
+  ge_p3_merge_three_tobytes(kB_bytes, kH_bytes, G_bytes, &kB, &kH, &G);
   //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
 
   SHA512_Init(&c_ctx);
@@ -1205,6 +1236,9 @@ static void ECVRF_prove(uint8_t pi[80], const uint8_t SK_bytes[32],
   OPENSSL_cleanse(kH_bytes, sizeof(kH_bytes));
   ge_p3_0(&Y);
   ge_p3_0(&H);
+  ge_p3_0(&kB);
+  ge_p3_0(&kH);
+  ge_p3_0(&G);
 
 }
 
