@@ -414,6 +414,7 @@ static void ge_p3_cswap(ge_p3 *p, ge_p3 *q, unsigned int b)
   fe_cswap(p->T, q->T, b);
 }
 
+/* r = -p */
 static void ge_p3_neg(ge_p3 *r, const ge_p3 *p)
 {
   fe_neg(r->X, p->X);
@@ -602,7 +603,7 @@ static void ge_p3_merge_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_
  * Dedicated / Dual Edwards addition
  * r = p + q
  *
- * Cost: 8M total
+ * Cost: 8M
  *
  * Reference:
  * Section 3.2 of "Twisted Edwards Curves Revisited", H. Hisil et al.
@@ -657,7 +658,7 @@ static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
   ge_p3_copy(&P, H);
 
   /* Avoids using secret array indices by carrying three point swaps each interation. Supplementary index array is used to put sum[b1 + 2*b2] in sum[0].
-     In an environment where side-channel attacks are not a threat this could be avoided by refering to sum[b1 + 2*b2] right away. */
+     In an environment where side-channel attacks are not a threat this could be avoided by referring to sum[b1 + 2*b2] right away. */
   for(pos = 0; pos < 255; ++pos){
     unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
     unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
@@ -723,25 +724,25 @@ static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], con
     fe_frombytes(u, ub);
     fe_frombytes(v, vb);
     fe_2A(AA);
-    fe_mul(T1, u, Z1);  //  1.  T1 <--  u * Z1
-    fe_add(T2, U1, T1); //  2.  T2 <-- U1 + T1
-    fe_sub(T3, U1, T1); //  3.  T3 <-- U1 - T1
-    fe_mul(T3, T3, T3); //  4.  T3 <-- T3 * T3
-    fe_mul(T3, T3, U2); //  5.  T3 <-- T3 * U2
-    fe_mul(T1, AA, Z1); //  6.  T1 <-- 2A * Z1
-    fe_add(T2, T2, T1); //  7.  T2 <-- T2 + T1
-    fe_mul(T4, u, U1);  //  8.  T4 <--  u * U1
-    fe_add(T4, T4, Z1); //  9.  T4 <-- T4 + Z1
-    fe_mul(T2, T2, T4); // 10.  T2 <-- T2 * T4
-    fe_mul(T1, T1, Z1); // 11.  T1 <-- T1 * Z1
-    fe_sub(T2, T2, T1); // 12.  T2 <-- T2 - T1
-    fe_mul(T2, T2, Z2); // 13.  T2 <-- T2 * Z2
-    fe_sub(V, T2, T3);  // 14.   V <-- T2 - T3
-    fe_add(T1, v, v);   // 15.  T1 <--  2 * v
-    fe_mul(T1, T1, Z1); // 16.  T1 <-- T1 * Z1
-    fe_mul(T1, T1, Z2); // 17.  T1 <-- T1 * Z2
-    fe_mul(U, T1, U1);  // 18.   U <-- T1 * U1
-    fe_mul(Z, T1, Z1);  // 19.   Z <-- T1 * Z1
+    fe_mul(T1, u, Z1);  /*  1.  T1 <--  u * Z1    */
+    fe_add(T2, U1, T1); /*  2.  T2 <-- U1 + T1    */
+    fe_sub(T3, U1, T1); /*  3.  T3 <-- U1 - T1    */
+    fe_mul(T3, T3, T3); /*  4.  T3 <-- T3 * T3    */
+    fe_mul(T3, T3, U2); /*  5.  T3 <-- T3 * U2    */
+    fe_mul(T1, AA, Z1); /*  6.  T1 <-- 2A * Z1    */
+    fe_add(T2, T2, T1); /*  7.  T2 <-- T2 + T1    */
+    fe_mul(T4, u, U1);  /*  8.  T4 <--  u * U1    */
+    fe_add(T4, T4, Z1); /*  9.  T4 <-- T4 + Z1    */
+    fe_mul(T2, T2, T4); /* 10.  T2 <-- T2 * T4    */
+    fe_mul(T1, T1, Z1); /* 11.  T1 <-- T1 * Z1    */
+    fe_sub(T2, T2, T1); /* 12.  T2 <-- T2 - T1    */
+    fe_mul(T2, T2, Z2); /* 13.  T2 <-- T2 * Z2    */
+    fe_sub(V, T2, T3);  /* 14.   V <-- T2 - T3    */
+    fe_add(T1, v, v);   /* 15.  T1 <--  2 * v     */
+    fe_mul(T1, T1, Z1); /* 16.  T1 <-- T1 * Z1    */
+    fe_mul(T1, T1, Z2); /* 17.  T1 <-- T1 * Z2    */
+    fe_mul(U, T1, U1);  /* 18.   U <-- T1 * U1    */
+    fe_mul(Z, T1, Z1);  /* 19.   Z <-- T1 * Z1    */
 }
 
 /* LC: Either explain this algorithm or point to a paper where it is explained */
