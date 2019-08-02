@@ -33,7 +33,7 @@ int ecvrf_init(ENGINE *e)
     sscanf(b, "%2x", &xc32);
     alpha[i] = (uint8_t)(xc32&255);
   }
-  ECVRF_prove(&t, pi, x, alpha, alpha_len);
+  ECVRF_prove(pi, x, alpha, alpha_len);
   for(int i=0; i<80; i++){
     if(pi[i] < 16)
       printf("0%1x", pi[i]);
@@ -109,7 +109,7 @@ int ecvrf_init(ENGINE *e)
         }
         uint8_t pi[80];
 
-        ECVRF_prove(&t, pi, SK, line, len);
+        ECVRF_prove(pi, SK, line, len);
         t_total += t;
 
         uint8_t alpha[256];
