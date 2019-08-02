@@ -18,6 +18,7 @@
  * 256 times the per bit cost.
  */
 
+
 /**
  * Returns, via parameter out, a field element equal to
  * A, where A = 48662 is the coefficient in the Mongtomery Curve 25519 equation v^2 = u(u^2 + Au + 1)
@@ -653,7 +654,8 @@ static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
 /**
  * (p, q) = (nH, mH), where scalar1 is n and scalar2 is m
  *
- * Cost: 12M + 4S + 1C per bit
+ *
+ * Cost: 12M + 4S + 1C per bit (cheaper than two montgomery ladders; see montgomery_ladder_scalar_mult)
  */
 static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
                                   const uint8_t scalar1[32], const uint8_t scalar2[32])
@@ -707,7 +709,7 @@ static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
 
   }
 
-  /* Counter-measure against exceeding the group order */
+  /* Counter-measure against overlaping after exceeding the group order */
   for(pos = 252; pos < 255; ++pos){
     unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
     unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
@@ -766,11 +768,18 @@ static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe u, const fe v, const fe z)
 
 /**
  * Recovery formula for Montgomery y-Coordinate
+ * Given P and the u-coordinate of nP and (n+1)P, recover the v coordinate of nP
+ * Input:
+ * - Montgomery coordinates ub and vb of P
+ * - U1 and Z1 such that the u-coordinate of nP is U1/Z1
+ * - U2 and Z2 such that the u-coordinate of (n+1)P is U2/Z2
+ * Output:
+ * - Projective recovered montgomery coordinates (U, V, Z) of nP (note that U/Z = U1/Z1)
  *
  * Reference:
  * Section 3 of "Efficient Elliptic Curve Cryptosystems from a Scalar Multiplication Algorithms with Recovery
  *  of the y-Coordinate on a Montgomery-Form Elliptic Curve", K. Okeya, K. Sakurai, CHES 2001
- * https://link.springer.com/content/pdf/10.1007/3-540-44709-1_12.pdf
+ * https://www.researchgate.net/publication/221291651_Efficient_Elliptic_Curve_Cryptosystems_from_a_Scalar_Multiplication_Algorithm_with_Recovery_of_the_y-Coordinate_on_a_Montgomery-Form_Elliptic_Curve
  */
 static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], const uint8_t vb[32],
                                 const fe U1, const fe Z1, const fe U2, const fe Z2)
@@ -802,7 +811,8 @@ static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], con
 
 /**
  * Montgomery Ladder
- * Outputs Montgomery u-coodrinates of points [nP, (n+1)P] as fractions
+ * Outputs Montgomery u-coodrinates of points [nP, (n+1)P] as fractions (u2/z2 and u3/z3),
+ * where the Montgomery u-coordinate of P is given as in_u and n is given as scalar
  *
  * Cost: 5M + 4S + 1C per bit
  *
@@ -814,7 +824,7 @@ static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], con
  *  https://eprint.iacr.org/2017/293.pdf
  */
 static void montgomery_ladder(fe out_u2, fe out_z2, fe out_u3, fe out_z3,
-                                       const uint8_t scalar[32], const size_t scalar_len, const uint8_t in_u[32])
+                                       const uint8_t * scalar, const size_t scalar_len, const uint8_t in_u[32])
 {
     fe u1, u2, z2, u3, z3, tmp0, tmp1;
     uint8_t e[32];
@@ -866,7 +876,7 @@ static void montgomery_ladder(fe out_u2, fe out_z2, fe out_u3, fe out_z3,
 }
 
 /**
- * Montgomery Ladder
+ * Montgomery Ladder, with input in Montgomery coordinates and output in Twisted Edwards
  * Outputs scalar multiple of a Montgomery point (u, v) as a point on Twisted Edwards curve25519
  */
 static void montgomery_ladder_scalar_mult(ge_p3 *r, const uint8_t *scalar, const size_t scalar_len,
@@ -880,11 +890,11 @@ static void montgomery_ladder_scalar_mult(ge_p3 *r, const uint8_t *scalar, const
 }
 
 /**
- * R = nP - mQ
- * Performs two Montgomery Ladders. Saves the cost of switching between curves by merging inversions.
+ * R = nP - mQ, with inputs and outputs in Edwards coordinates
+ * Performs two Montgomery Ladders. Saves the cost of switching between curves by combining inversions.
  *
  * Cost: 10M + 9S + 2C per bit
- * Inversion has a similar cost to 1S per bit.
+ * (two times montgomery_ladder plus one inversion, at 1S per bit, to go from Twisted Edwards to Montgomery
  */
 static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, const ge_p3 *q,
                                                   const uint8_t *scalar1, const size_t scalar1_len,
@@ -908,7 +918,7 @@ static void montgomery_double_scalar_mult_difference(ge_p3 *r, const ge_p3 *p, c
  * bytes format through out_point_bytes. Point is derived from
  * field element r.
  *
- * Cost per bit of r: approximately 2S + 0.2M (S =  squaring, M = fe multiplication)
+ * Cost per bit of r: approximately 2S
  * (more precisely, 514 squarings and 45 multplications, with fe_inverse and fe_fraction_sqrt_and_legendre taking up most of the time) */
 static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_point_bytes[32], const fe r)
 {
@@ -1059,7 +1069,7 @@ static void ECVRF_alpha_to_curve(ge_p3 *out_point, uint8_t out_point_bytes[32],
   static const uint8_t SUITE  = 0x04;
   static const uint8_t ONE    = 0x01;
 
-  // hash(suite || one || pk || alpha)
+  /* hash(suite || one || pk || alpha) */
   uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
   SHA512_CTX hash_ctx;
   SHA512_Init(&hash_ctx);
@@ -1069,23 +1079,23 @@ static void ECVRF_alpha_to_curve(ge_p3 *out_point, uint8_t out_point_bytes[32],
   SHA512_Update(&hash_ctx, alpha, alpha_len);
   SHA512_Final(hash, &hash_ctx);
 
-  // take first 32 bytes of the hash
+  /* take first 32 bytes of the hash */
   uint8_t truncatedHash[32];
   memcpy(truncatedHash, hash, 32);
 
-  // take highest order bit of truncated hash
-  // clear the bit in the source
+  /* take highest order bit of truncated hash */
+  /* clear the bit in the source */
   truncatedHash[31] &= 0x7f;
 
-  // field element from the hash
+  /* field element from the hash */
   fe r;
   fe_frombytes(r, truncatedHash);
 
-  // elligator2
+  /* elligator2 */
   ECVRF_hash_to_curve_elligator2_25519(out_point, out_point_bytes, r);
 }
 
-static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_t* pi)
+static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t c[16], uint8_t s[32], const uint8_t pi[80])
 {
   uint8_t gamma_string[32];
   memcpy(gamma_string, pi, 32);
@@ -1100,7 +1110,7 @@ static int ECVRF_decode_proof(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_
   return status;
 }
 
-static int ECVRF_decode_proof_vartime(ge_p3 *Gamma, uint8_t *c, uint8_t *s, const uint8_t* pi)
+static int ECVRF_decode_proof_vartime(ge_p3 *Gamma, uint8_t c[16], uint8_t s[32], const uint8_t pi[80])
 {
   uint8_t gamma_string[32];
   memcpy(gamma_string, pi, 32);
@@ -1116,25 +1126,9 @@ static int ECVRF_decode_proof_vartime(ge_p3 *Gamma, uint8_t *c, uint8_t *s, cons
   return 1;
 }
 
+/** Constant time */
 static int ECVRF_proof_to_hash(uint8_t *beta, const uint8_t *pi)
 {
-  /*
-    1.  D = ECVRF_decode_proof(pi_string)
-
-    2.  If D is "INVALID", output "INVALID" and stop
-
-    3.  (Gamma, c, s) = D
-
-    4.  three_string = 0x03 = int_to_string(3, 1), a single octet with
-       value 3
-
-    5.  beta_string = Hash(suite_string || three_string ||
-       point_to_string(cofactor * Gamma))
-
-    6.  Output beta_string
-  */
-
-
   static const uint8_t SUITE  = 0x04;
   static const uint8_t THREE  = 0x03;
 
@@ -1145,6 +1139,7 @@ static int ECVRF_proof_to_hash(uint8_t *beta, const uint8_t *pi)
   ge_p1p1 gamma_p1p1;
   int status = ECVRF_decode_proof(&gamma_p3, c, s, pi);
 
+  /* Compute cofactor * Gamma */
   ge_p3_to_p2(&gamma_p2, &gamma_p3);
 
   ge_p2_dbl(&gamma_p1p1, &gamma_p2);
@@ -1156,37 +1151,19 @@ static int ECVRF_proof_to_hash(uint8_t *beta, const uint8_t *pi)
 
   ge_tobytes(gamma_cofactor, &gamma_p2);
 
-  uint8_t hash[SHA512_DIGEST_LENGTH] = {0};
+  /* beta_string = Hash(suite_string || three_string || point_to_string(cofactor * Gamma)) */
   SHA512_CTX hash_ctx;
   SHA512_Init(&hash_ctx);
   SHA512_Update(&hash_ctx, &SUITE, 1);
   SHA512_Update(&hash_ctx, &THREE, 1);
   SHA512_Update(&hash_ctx, gamma_cofactor, 32);
-  SHA512_Final(hash, &hash_ctx);
-
-  memcpy(beta, hash, 64);
+  SHA512_Final(beta, &hash_ctx);
 
   return status;
 }
 
 static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
 {
-  /*
-    1.  D = ECVRF_decode_proof(pi_string)
-
-    2.  If D is "INVALID", output "INVALID" and stop
-
-    3.  (Gamma, c, s) = D
-
-    4.  three_string = 0x03 = int_to_string(3, 1), a single octet with
-       value 3
-
-    5.  beta_string = Hash(suite_string || three_string ||
-       point_to_string(cofactor * Gamma))
-
-    6.  Output beta_string
-  */
-
   uint8_t c[16], s[32];
 
   static const uint8_t SUITE  = 0x04;
@@ -1200,6 +1177,7 @@ static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
     return -1;
 
 
+  /* Compute cofactor * Gamma */
   ge_p3_to_p2(&gamma_p2, &gamma_p3);
 
   ge_p2_dbl(&gamma_p1p1, &gamma_p2);
@@ -1211,6 +1189,7 @@ static int ECVRF_proof_to_hash_vartime(uint8_t *beta, const uint8_t *pi)
 
   ge_tobytes(gamma_cofactor, &gamma_p2);
 
+  /* beta_string = Hash(suite_string || three_string || point_to_string(cofactor * Gamma)) */
   SHA512_CTX hash_ctx;
   SHA512_Init(&hash_ctx);
   SHA512_Update(&hash_ctx, &SUITE, 1);
@@ -1258,7 +1237,7 @@ static void ECVRF_prove(uint8_t pi[80], const uint8_t SK_bytes[32],
 
   double_scalar_fixed_point_mult(&kH, &G, &H, nonce, truncatedHash);
   ge_p3_three_tobytes(kB_bytes, kH_bytes, G_bytes, &kB, &kH, &G);
-  //6.  c = ECVRF_hash_points(H, Gamma, k*B, k*H)
+  /*  c = ECVRF_hash_points(H, Gamma, k*B, k*H) */
 
   SHA512_Init(&c_ctx);
   SHA512_Update(&c_ctx, &SUITE, 1);
@@ -1272,11 +1251,10 @@ static void ECVRF_prove(uint8_t pi[80], const uint8_t SK_bytes[32],
   memset(c, 0, 32);
   memcpy(c, c_string, 16);
 
-  //7.  s = (k + c*x) mod q
+  /* s = (k + c*x) mod q */
   sc_muladd(s, truncatedHash, c, nonce);
 
-  //8.  pi_string = point_to_string(Gamma) || int_to_string(c, n) || int_to_string(s, qLen)
-  //9.  Output pi_string
+  /* pi_string = point_to_string(Gamma) || int_to_string(c, n) || int_to_string(s, qLen) */
   memcpy(pi, G_bytes, 32);
   memcpy(pi+32, c, 16);
   memcpy(pi+48, s, 32);
@@ -1300,24 +1278,6 @@ static void ECVRF_prove(uint8_t pi[80], const uint8_t SK_bytes[32],
 static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
                   const uint8_t *alpha, const size_t alpha_len)
 {
-  /*
-    1.  D = ECVRF_decode_proof(pi_string)
-
-    2.  If D is "INVALID", output "INVALID" and stop
-
-    3.  (Gamma, c, s) = D
-
-    4.  H = ECVRF_hash_to_curve(suite_string, Y, alpha_string)
-
-    5.  U = s*B - c*Y
-
-    6.  V = s*H - c*Gamma
-
-    7.  c' = ECVRF_hash_points(H, Gamma, U, V)
-
-    8.  If c and c' are equal, output ("VALID",
-        ECVRF_proof_to_hash(pi_string)); else output "INVALID"
-  */
   static const uint8_t SUITE  = 0x04;
   static const uint8_t TWO    = 0x02;
   uint8_t cp_string[SHA512_DIGEST_LENGTH];
@@ -1329,12 +1289,15 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
   if(ECVRF_decode_proof_vartime(&G, c, s, pi) == -1)
     return 0;
 
+  /* H = ECVRF_hash_to_curve(suite_string, Y, alpha_string) */
   ECVRF_alpha_to_curve(&H, H_bytes, Y_bytes, alpha, alpha_len);
+
 
   ge_frombytes_vartime(&Y, Y_bytes);
   ge_p3_neg(&Y, &Y);
 
   /**
+   * U = s*B - c*Y
    * Twisted Edwards specific scalar multiplication from curve25519.c used to calculate s*B - c*Y
    * Performance might be improved by using base point scalar multiplication and montgomery ladder for 128-bit scalar.
    * However, for significant performance improvement, batch verification should be used.
@@ -1343,6 +1306,7 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
   ge_p2_to_p3(&U, &U_p2);
 
   /**
+   * V = s*H - c*Gamma
    * Two montgomery ladders used to calculate s*H - c*Gamma. The latter ladder takes advantage of the fact that c is 128-bit long.
    * As side-channel attack is not a threat to the verify method, vartime sliding window might yield better performance.
    */
@@ -1351,6 +1315,7 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
   /* This could be further sped up if vartime inversion is used */
   ge_p3_two_tobytes(U_bytes, V_bytes, &U, &V);
 
+  /* c' = ECVRF_hash_points(H, Gamma, U, V) */
   SHA512_Init(&cp_ctx);
   SHA512_Update(&cp_ctx, &SUITE, 1);
   SHA512_Update(&cp_ctx, &TWO, 1);
@@ -1363,9 +1328,5 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
   uint8_t cp[32];
   memset(cp, 0, 32);
   memcpy(cp, cp_string, 16);
-
-  for(uint32_t i=0; i<32; i++)
-    if(c[i] != cp[i])
-      return 0;
-  return 1;
+  return memcmp(c, cp, 32) == 0;
 }
