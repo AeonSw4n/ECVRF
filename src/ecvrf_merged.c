@@ -3,6 +3,13 @@
 #include <time.h>
 
 /**
+ * Implementation of the ECVRF-ED25519-SHA512-Elligator2 ciphersuite of ECVRF
+ * Copyright 2019, Piotr Nojszewski <pnojszew@bu.edu>
+ * More information about Elliptic Curve Verifiable Random Functions
+ * can be found at https://tools.ietf.org/html/draft-irtf-cfrg-vrf-04.
+ */
+
+/**
  * Approximate running time costs are indicated for most of the expensive functions in this file,
  * using S for fe squaring, M for fe multiplication, and C for multiplying by a short constant (in our case, fe_mul121666).
  * Note that 1S is approximately 0.8M, and 1C is much cheaper.
@@ -65,7 +72,6 @@ static void fe_A_cubed(fe out)
   out[8] = 0;
   out[9] = 0;
 }
-
 
 /**
  * Returns, via parameter out, a field element equal to the positive
@@ -200,7 +206,6 @@ static void fe_mul121666(fe h, const fe f)
     h[8] = (int32_t)h8;
     h[9] = (int32_t)h9;
 }
-
 
 /* This is neededed because when BASE_2_51_IMPLEMENTED is defined, this function in curve25519.c disappears */
 /**
@@ -549,9 +554,13 @@ static void ge_p3_three_tobytes(uint8_t out1[32], uint8_t out2[32], uint8_t out3
 
 /**
  * Combine two birational maps from extended Twisted Edwards to affine Montgomery to save time.
- * LC: write the conversion formula here
+ *
  * (u1, v1) <-- p
  * (u2, v2) <-- q
+ *
+ * For extended Twisted Edwards point (X : Y : Z : T), the map is:
+ * u = (Z + Y) / (Z - Y)
+ * v = (\sqrt{-(A+2)} * u * Z) / X
  *
  * Cost: 1S per bit
  */
@@ -593,12 +602,21 @@ static void ge_p3_two_to_montgomery(uint8_t u1[32], uint8_t v1[32], uint8_t u2[3
     fe_mul(t5, t5, q->Z);
     fe_mul(t5, t5, sqrtnAp2);
     fe_tobytes(v2, t5);
-    /* LC: Does cleansing has to happen??? Here and elsewhere */
+
+}
+
+/* h = (0,1) */
+static void ge_p1p1_0(ge_p1p1 *h)
+{
+  fe_0(h->X);
+  fe_1(h->Y);
+  fe_1(h->Z);
+  fe_1(h->T);
 }
 
 /**
  * Dedicated (also known as Dual) Edwards addition
- * LC: Works only if the points are ....
+ * This addition is undefined for point doubling.
  * r = p + q
  *
  * Cost: 8M
@@ -630,20 +648,18 @@ static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
     fe_mul(r->Y, G, H);         /* 16.  Y3 = G * H                  */
     fe_mul(r->T, E, H);         /* 17.  T3 = E * H                  */
     fe_mul(r->Z, F, G);         /* 18.  Z3 = F * G                  */
-    /* LC: Does cleansing has to happen??? */
 }
 
 /**
  * (p, q) = (nH, mH), where scalar1 is n and scalar2 is m
- *
- * LC: write down preconditions  the scalars, if any
+ * scalar cannot be greater than the group order 2^252 + 0x14def9dea2f79cd65812631a5cf5d3ed
  *
  * Cost: 12M + 4S + 1C per bit
  */
 static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
                                   const uint8_t scalar1[32], const uint8_t scalar2[32])
 {
-    
+
   ge_p3 sum[4];
   ge_p1p1 tp1;
   ge_cached tca;
@@ -666,14 +682,14 @@ static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
    * s2 if the ith bits of scalar2 and scalar1 are 10
    * s3 if both ith bits are 1
    */
-    
+
   /* In order to avoid indexing into an array based on the of the scalar (to prevent secret array indexes side-channel attack),
    * we swap the correct sj into sum[0] using cswaps based on the bits of the scalar.
    * This requires us to maintain a second array, called index, which keeps track of which s is where in the sum array.
    * Specifically, sj lives in sum[index[j]]
    * In an environment where side-channel attacks are not a threat this could be avoided by referring to s[b1 + 2*b2] right away.
    */
-    
+
   for(pos = 0; pos < 255; ++pos){
     unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
     unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
@@ -683,8 +699,8 @@ static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
       ge_p3_cswap(&sum[i], &sum[i+1], b);
       cswap(&index[i], &index[i+1], b);
     }
-
-    ge_dedicated_add(&sum[0], &sum[0], &P); // LC: we can use dedicated add here because???
+    /* We use dedicated addition because P is always greater than any of the points from sum */
+    ge_dedicated_add(&sum[0], &sum[0], &P);
 
     ge_p3_dbl(&tp1, &P);
     ge_p1p1_to_p3(&P, &tp1);
@@ -705,10 +721,11 @@ static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
   ge_dedicated_add(q, &sum[2], &sum[3]);
 
   /* Cleanse temporary values */
-  for(pos = 0; pos < 4; pos++){
+  for(pos = 0; pos < 4; pos++)
     ge_p3_0(&sum[pos]);
-  }
-  ge_p3_0(&P); /* LC: Other cleansing has to happen!!! */
+  ge_p3_0(&P);
+  ge_p1p1_0(&tp1);
+  fe_0(tca.YplusX), fe_0(tca.YminusX), fe_0(tca.Z), fe_0(tca.T2d);
 }
 
 /**
@@ -728,7 +745,6 @@ static void montgomery_p2_to_ge_p3(ge_p3 *r, const fe u, const fe v, const fe z)
     ge_p1p1_to_p3(r, &p);
 }
 
-/* LC: Either explain this algorithm or point to a paper where it is explained */
 /**
  * Recovery formula for Montgomery y-Coordinate
  *
@@ -765,7 +781,6 @@ static void montgomery_recover_point(fe U, fe V, fe Z, const uint8_t ub[32], con
     fe_mul(Z, T1, Z1);  /* 19.   Z <-- T1 * Z1    */
 }
 
-/* LC: Either explain this algorithm or point to a paper where it is explained */
 /**
  * Montgomery Ladder
  * Outputs Montgomery u-coodrinates of points [nP, (n+1)P] as fractions
@@ -906,8 +921,8 @@ static void ECVRF_hash_to_curve_elligator2_25519(ge_p3 *out_point, uint8_t out_p
 
     /* We now have the numerator and the denominator of w. We need to evaluate the Legendre of w and takes its square root or the square root
        of 2rw (depending on whether is a square) to get v.
-      To avoid inversion, we will evaluate Legendre of w_numerator * w_denom**7 (which is the same as Legendre of w); this will also help us with square root.
-      This trick is described by Bernstein et al. in "High-speed high-security signatures" in Sec. 5. LC: get a better reference and double check It is easy to see that the Legendre can also be acquired from that routine.
+      To avoid inversion, we will evaluate Legendre of w_numerator * w_denom**7 (which is the same as Legendre of w = w_numerator / w_denom); this will also help us with square root.
+      This trick is described by Bernstein et al. in "High-speed high-security signatures" in Sec. 5. https://ed25519.cr.yp.to/ed25519-20110705.pdf
     */
 
     /* w_denom_cubed = w_denom ** 3 */
@@ -1291,7 +1306,7 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
   SHA512_CTX cp_ctx;
   ge_p3 H, G, U, V, Y;
   ge_p2 U_p2;
-    // LC: why not ge_frombytes_vartime -- why waste time on constant-time?
+
   if(ECVRF_decode_proof_vartime(&G, c, s, pi) == -1)
     return 0;
 
@@ -1299,13 +1314,23 @@ static int ECVRF_verify(const uint8_t *Y_bytes, const uint8_t *pi,
 
   ge_frombytes_vartime(&Y, Y_bytes);
   ge_p3_neg(&Y, &Y);
+
+  /**
+   * Twisted Edwards specific scalar multiplication from curve25519.c used to calculate s*B - c*Y
+   * Performance might be improved by using base point scalar multiplication and montgomery ladder for 128-bit scalar.
+   * However, for significant performance improvement, batch verification should be used.
+   */
   ge_double_scalarmult_vartime(&U_p2, c, &Y, s);
   ge_p2_to_p3(&U, &U_p2);
 
-    /* LC: explain why we choose montgomery algorithm here but edwards algorithm in the previous line */
+  /**
+   * Two montgomery ladders used to calculate s*H - c*Gamma. The latter ladder takes advantage of the fact that c is 128-bit long.
+   * As side-channel attack is not a threat to the verify method, vartime sliding window might yield better performance.
+   */
   montgomery_double_scalar_mult_difference(&V, &H, &G, s, 32, c, 16);
 
-  ge_p3_two_tobytes(U_bytes, V_bytes, &U, &V); /* LC: This could be further sped up if we used vartime inversion, but not clear if worth implementing */
+  /* This could be further sped up if vartime inversion is used */
+  ge_p3_two_tobytes(U_bytes, V_bytes, &U, &V);
 
   SHA512_Init(&cp_ctx);
   SHA512_Update(&cp_ctx, &SUITE, 1);
