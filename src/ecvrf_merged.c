@@ -652,7 +652,6 @@ static void ge_dedicated_add(ge_p3 *r, const ge_p3 *p, const ge_p3 *q)
 
 /**
  * (p, q) = (nH, mH), where scalar1 is n and scalar2 is m
- * scalar cannot be greater than the group order 2^252 + 0x14def9dea2f79cd65812631a5cf5d3ed
  *
  * Cost: 12M + 4S + 1C per bit
  */
@@ -690,7 +689,7 @@ static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
    * In an environment where side-channel attacks are not a threat this could be avoided by referring to s[b1 + 2*b2] right away.
    */
 
-  for(pos = 0; pos < 255; ++pos){
+  for(pos = 0; pos < 252; ++pos){
     unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
     unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
 
@@ -699,12 +698,32 @@ static void double_scalar_fixed_point_mult(ge_p3 *p, ge_p3 *q, const ge_p3 *H,
       ge_p3_cswap(&sum[i], &sum[i+1], b);
       cswap(&index[i], &index[i+1], b);
     }
-    /* We use dedicated addition because P is always greater than any of the points from sum */
+    /* We use dedicated addition because P is always a greater multiple of H than any of the points from sum. */
+    /* After scalar is greater than the group order: 2^252 + 0x14def9dea2f79cd65812631a5cf5d3ed, the points can overlap. */
     ge_dedicated_add(&sum[0], &sum[0], &P);
 
     ge_p3_dbl(&tp1, &P);
     ge_p1p1_to_p3(&P, &tp1);
 
+  }
+
+  /* Counter-measure against exceeding the group order */
+  for(pos = 252; pos < 255; ++pos){
+    unsigned int b1 = 1 & (scalar1[pos / 8] >> (pos & 7));
+    unsigned int b2 = 1 & (scalar2[pos / 8] >> (pos & 7));
+
+    for(int i=2; i>=0; i--){
+      unsigned int b = (index[i+1] == (b1 + 2*b2));
+      ge_p3_cswap(&sum[i], &sum[i+1], b);
+      cswap(&index[i], &index[i+1], b);
+    }
+    /* Using complete addition */
+    ge_p3_to_cached(&tca, &P);
+    ge_add(&tp1, &sum[0], &tca);
+    ge_p1p1_to_p3(&sum[0], &tp1);
+
+    ge_p3_dbl(&tp1, &P);
+    ge_p1p1_to_p3(&P, &tp1);
   }
 
   /* This loop puts sj into sum[j] */
