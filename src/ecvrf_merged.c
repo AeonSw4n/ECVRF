@@ -3,7 +3,7 @@
 #include <time.h>
 
 /**
- * Implementation of the ECVRF-ED25519-SHA512-Elligator2 ciphersuite of ECVRF
+ * Implementation of the ECVRF-ED25519-SHA512-Elligator2 Ciphersuite of ECVRF
  * Copyright 2019, Piotr Nojszewski <pnojszew@bu.edu>
  * More information about Elliptic Curve Verifiable Random Functions
  * can be found at https://tools.ietf.org/html/draft-irtf-cfrg-vrf-04.
